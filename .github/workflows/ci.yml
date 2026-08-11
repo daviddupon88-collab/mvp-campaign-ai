@@ -85,12 +85,40 @@ jobs:
           name: coverage-report
           path: backend/coverage
 
+  frontend:
+    runs-on: ubuntu-latest
+
+    # Avant ce job, la CI ne construisait ni ne lintait jamais le frontend : docker-publish
+    # partait directement du code source vers une image publiée. Une régression frontend
+    # (erreur de type, import cassé) pouvait donc atteindre `latest` sans jamais être détectée.
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
   # Publie les images Docker sur GitHub Container Registry — la partie de la CD qui ne
   # dépend d'aucune infrastructure cible spécifique (contrairement au déploiement effectif,
   # qui varie selon l'hébergeur choisi). Uniquement sur `main`, jamais sur une PR : une image
   # taguée `latest` ne doit correspondre qu'à du code déjà revu et fusionné.
   docker-publish:
-    needs: backend
+    needs: [backend, frontend]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
