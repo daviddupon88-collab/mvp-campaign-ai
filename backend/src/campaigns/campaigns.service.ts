@@ -7,6 +7,7 @@ import { CreateCampaignDto } from './dto/campaign.dto';
 import { RejectCampaignDto } from './dto/approval.dto';
 import { CampaignTemplatesService } from '../campaign-templates/campaign-templates.service';
 import { EntitlementsService } from '../plans/entitlements.service';
+import { mapChannelSlugsToPlatforms } from '../plans/plan-catalog';
 
 export interface ApprovalActor {
   userId: string;
@@ -77,15 +78,21 @@ export class CampaignsService {
 
     if (channels.length > 0) {
       await this.entitlements.assertChannelAvailable(organizationId, channels.length);
-      // Note : la restriction PAR PLATEFORME (ex: essai limité à Meta/LinkedIn, cf.
-      // PlanDefinition.allowedChannels) n'est volontairement PAS vérifiée ici — `channels`
-      // utilise un vocabulaire de slugs internes ('facebook','tiktok'...) pour le ciblage
-      // du contenu généré, distinct de l'enum SocialPlatform ('META_FACEBOOK'...) utilisé
-      // par les connexions OAuth réelles. La vérification faisant autorité a lieu dans
-      // PublishingService.publishToChannel(), au moment où une plateforme réelle est
-      // effectivement sollicitée — c'est le seul moment où un canal non autorisé aurait un
-      // coût ou un risque réel ; le choisir en amont dans le wizard reste possible, seule
-      // la diffusion effective est bloquée.
+
+      // Restriction PAR PLATEFORME (ex: essai limité à Meta/LinkedIn, cf.
+      // PlanDefinition.allowedChannels) : `channels` utilise un vocabulaire de slugs
+      // internes ('facebook','tiktok'...) pour le ciblage du contenu généré, distinct de
+      // l'enum SocialPlatform ('META_FACEBOOK'...) utilisé par les connexions OAuth réelles
+      // — mapChannelSlugsToPlatforms() fait le pont entre les deux. La vérification reste
+      // AUSSI faite dans PublishingService.publishToChannel() au moment de la diffusion
+      // réelle (seul moment où un canal non autorisé aurait un coût ou un risque réel) :
+      // ce contrôle-ci est un avertissement précoce, pas un remplacement, pour qu'un compte
+      // en essai découvre la restriction dès le wizard plutôt qu'après avoir généré du
+      // contenu pour un canal qu'il ne pourra jamais publier.
+      const platforms = mapChannelSlugsToPlatforms(channels);
+      if (platforms.length > 0) {
+        await this.entitlements.assertChannelsAllowed(organizationId, platforms);
+      }
     }
 
     const campaign = await this.prisma.campaign.create({
@@ -174,6 +181,13 @@ export class CampaignsService {
     }
     await this.entitlements.assertActiveSubscription(organizationId);
     await this.entitlements.assertCreditsAvailable(organizationId);
+
+    if (dto.channels && dto.channels.length > 0) {
+      const platforms = mapChannelSlugsToPlatforms(dto.channels);
+      if (platforms.length > 0) {
+        await this.entitlements.assertChannelsAllowed(organizationId, platforms);
+      }
+    }
 
     await this.prisma.campaign.update({
       where: { id: campaignId },

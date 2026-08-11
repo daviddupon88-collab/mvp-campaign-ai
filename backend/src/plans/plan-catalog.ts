@@ -51,7 +51,13 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'trial',
     name: 'Essai gratuit',
     priceMonthly: 0,
-    aiCreditsIncluded: 60,
+    // 75, pas 60 : une campagne multi-canaux (ex: 3 canaux + 1 image) coûte mécaniquement
+    // ~65 crédits depuis l'introduction du copywriting différencié par canal (un appel
+    // generateText distinct par canal plutôt qu'un texte unique dupliqué) — 60 crédits
+    // rendait le scénario multi-canaux le plus démonstratif du produit irréalisable dès la
+    // première campagne. Décision commerciale explicite (README item 61), pas un simple
+    // ajustement technique.
+    aiCreditsIncluded: 75,
     maxSeats: 2,
     maxActiveCampaigns: 3,
     maxChannels: 3,
@@ -200,4 +206,24 @@ export const CREDIT_COSTS: Record<string, Record<string, number>> = {
 
 export function creditCostFor(purpose: string, taskType: string): number {
   return CREDIT_COSTS[purpose]?.[taskType] ?? 5; // repli prudent si combinaison non cataloguée
+}
+
+// Correspondance entre les slugs internes de canal utilisés par le wizard de création de
+// campagne / AI Orchestrator ('facebook', 'tiktok'... cf. AiOrchestratorService.
+// buildChannelPrompt) et l'enum SocialPlatform utilisé par les connexions OAuth réelles
+// ('META_FACEBOOK'...) — deux vocabulaires distincts qui empêchaient jusqu'ici de vérifier
+// PlanDefinition.allowedChannels dès la création d'une campagne (seule la publication
+// effective, en aval, le faisait — cf. CampaignsService.create). 'email' n'a volontairement
+// aucune correspondance : ce n'est pas un canal de diffusion social soumis à connexion OAuth
+// ni à allowedChannels.
+const CHANNEL_SLUG_TO_PLATFORM: Record<string, string | undefined> = {
+  facebook: 'META_FACEBOOK',
+  instagram: 'META_INSTAGRAM',
+  linkedin: 'LINKEDIN',
+  tiktok: 'TIKTOK',
+  googleads: 'GOOGLE_ADS',
+};
+
+export function mapChannelSlugsToPlatforms(slugs: string[]): string[] {
+  return slugs.map((slug) => CHANNEL_SLUG_TO_PLATFORM[slug]).filter((platform): platform is string => !!platform);
 }
