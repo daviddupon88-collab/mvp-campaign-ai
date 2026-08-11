@@ -1,0 +1,948 @@
+// Campaign-ai — schéma de données MVP
+// Principe : toute table métier porte organizationId pour l'isolation multi-tenant.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MARKETING_MANAGER
+  EDITOR
+  VIEWER
+}
+
+enum CampaignStatus {
+  DRAFT
+  IN_PROGRESS
+  READY_FOR_REVIEW
+  APPROVED
+  REJECTED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ContentType {
+  TEXT
+  IMAGE
+  VIDEO
+  EMAIL
+  LANDING_PAGE
+}
+
+enum GenerationStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum ModerationCheckType {
+  TOXICITY          // haine, violence, contenu explicite — via l'API de modération OpenAI
+  MISLEADING_CLAIMS // promesses commerciales trompeuses (santé, gains garantis, superlatifs abusifs)
+  TRADEMARK_IMAGE    // marque déposée ou logo tiers détecté dans un visuel généré
+}
+
+enum ModerationStatus {
+  PASSED
+  FLAGGED  // signalé pour revue humaine, ne bloque pas automatiquement
+  BLOCKED  // violation jugée suffisamment grave pour rejeter automatiquement la campagne
+}
+
+enum SocialPlatform {
+  META_FACEBOOK
+  META_INSTAGRAM
+  LINKEDIN
+  GOOGLE_ADS
+  TIKTOK
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+enum PublishStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+}
+
+enum EcommercePlatform {
+  SHOPIFY
+  WOOCOMMERCE
+  PRESTASHOP
+}
+
+enum CampaignSector {
+  ECOMMERCE
+  SAAS_B2B
+  RESTAURANT_LOCAL
+  FITNESS_WELLNESS
+  REAL_ESTATE
+  EVENT
+  GENERAL
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum RecommendationStatus {
+  PENDING
+  APPLIED
+  DISMISSED
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users        Membership[]
+  brandKit     BrandKit?
+  campaigns    Campaign[]
+  generations  AiGeneration[]
+  subscription Subscription?
+
+  socialConnections SocialConnection[]
+  storeConnections  StoreConnection[]
+  importedProducts  ImportedProduct[]
+  campaignTemplates CampaignTemplate[]
+  invitations       Invitation[]
+  assets            Asset[]
+  contentPieces     ContentPiece[]
+  calendarEntries   CalendarEntry[]
+  brandMemoryEntries BrandMemoryEntry[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Distinct du RBAC par organisation (Membership.role) : un accès plateforme transverse,
+  // hors du principe d'isolation multi-tenant, réservé à l'équipe opérant Campaign-ai elle-même
+  // (support, ops) — jamais accordé automatiquement, cf. AdminModule.
+  isPlatformAdmin Boolean @default(false)
+
+  // RGPD (droit à l'effacement, Article 17) : suppression douce plutôt que suppression SQL
+  // immédiate — anonymise les champs identifiants (cf. DataDeletionService) mais conserve la
+  // ligne, car des tables légalement obligées de survivre (factures, AuditLog) y font référence.
+  deletedAt DateTime?
+
+  memberships Membership[]
+  notifications Notification[]
+  supportTickets SupportTicket[]
+  policyAcceptances PolicyAcceptance[]
+
+  @@map("users")
+}
+
+// Table de jonction User <-> Organization avec rôle (RBAC)
+model Membership {
+  id             String   @id @default(uuid())
+  role           Role     @default(EDITOR)
+  createdAt      DateTime @default(now())
+
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@map("memberships")
+}
+
+// Module 2 — Brand Intelligence : mémoire permanente de la marque
+// Module 2 — Brand Intelligence, devenu Brand Brain : au-delà des champs statiques édités
+// manuellement ci-dessous, la mémoire qui s'enrichit dans le temps vit dans
+// BrandMemoryEntry (alimentée automatiquement au fil des campagnes) — cf. plus bas.
+model BrandKit {
+  id             String   @id @default(uuid())
+  logoUrl        String?
+  colorPalette   Json?
+  typography     Json?
+  toneOfVoice    String?
+  valueProps     Json?
+  mission        String?
+  vision         String?
+  slogans        Json?    // string[]
+  competitors    Json?    // [{name, notes}]
+  personaNotes   Json?    // [{name, description}] — personas de référence de la marque
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("brand_kits")
+}
+
+model Campaign {
+  id          String         @id @default(uuid())
+  name        String
+  objective   String?
+  budget      Float?
+  status      CampaignStatus @default(DRAFT)
+  channels    Json?
+  audience    Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Garde-fous avant publication : validation humaine obligatoire + verdict de modération.
+  // Le passage à PUBLISHED ne peut jamais sauter l'étape APPROVED (cf. PublishingService).
+  moderationVerdict ModerationStatus?
+  approvedByUserId  String?
+  approvedByEmail   String? // dénormalisé pour l'audit même si l'utilisateur est supprimé plus tard
+  approvedAt        DateTime?
+  rejectionReason   String?
+
+  // Score de cohérence de marque (0-100, moyenne des vérifications) — informatif, n'empêche
+  // jamais l'approbation contrairement à moderationVerdict, mais s'affiche au validateur.
+  brandConsistencyScore Int?
+
+  // Template utilisé pour créer cette campagne, le cas échéant (Module 18 — Marketplace simplifié).
+  templateId String?
+  template   CampaignTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  generations              AiGeneration[]
+  publishedPosts           PublishedPost[]
+  moderationChecks         ModerationCheck[]
+  brandConsistencyChecks   BrandConsistencyCheck[]
+  metrics                  CampaignMetric[]
+  contentMetrics           ContentMetric[]
+  optimizationRecommendations OptimizationRecommendation[]
+  contentPieces            ContentPiece[]
+  calendarEntries          CalendarEntry[]
+
+  @@index([organizationId])
+  @@map("campaigns")
+}
+
+enum AssetType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum AssetSource {
+  GENERATED // produit par l'AI Orchestrator
+  UPLOADED  // téléversé manuellement par un utilisateur
+}
+
+enum ContentPieceStatus {
+  DRAFT
+  READY
+  ARCHIVED
+}
+
+enum CalendarEntryStatus {
+  SCHEDULED
+  PUBLISHED
+  MISSED
+  CANCELED
+}
+
+enum BrandMemoryType {
+  CAMPAIGN_LEARNING
+  COMPETITOR_NOTE
+  PERFORMANCE_INSIGHT
+}
+
+// Bibliothèque de médias — réutilisable à travers les campagnes, pas seulement lié à un
+// contenu ponctuel (un visuel généré pour une campagne peut être réutilisé dans une autre).
+// Un asset généré garde une trace de sa génération (generationId) pour l'audit et le coût ;
+// un asset téléversé manuellement n'en a pas.
+model Asset {
+  id            String      @id @default(uuid())
+  type          AssetType
+  source        AssetSource
+  url           String
+  // Clé dans le bucket S3-compatible (ou chemin local en mode dev), nécessaire pour
+  // supprimer l'objet réel — reconstruire une clé à partir de l'URL serait fragile
+  // (dépendrait du format exact de l'URL publique, qui varie selon le fournisseur/CDN).
+  // null pour un asset enregistré par simple URL externe (POST /assets classique),
+  // jamais stocké par nous, donc rien à supprimer côté objet.
+  storageKey    String?
+  fileName      String?
+  mimeType      String?
+  fileSizeBytes Int?
+  width         Int?
+  height        Int?
+  altText       String?
+  tags          Json? // string[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  generationId String?       @unique
+  generation   AiGeneration? @relation(fields: [generationId], references: [id], onDelete: SetNull)
+
+  versions ContentVersion[]
+
+  @@index([organizationId])
+  @@map("assets")
+}
+
+// Content Studio — unité logique "ce contenu, pour ce canal, dans cette campagne".
+// L'historique des modifications vit dans ContentVersion ; ContentPiece ne pointe que vers
+// la version courante (currentVersionId), ce qui permet de revenir en arrière sans perte
+// et de comparer des variations sans jamais écraser une version précédente.
+model ContentPiece {
+  id        String             @id @default(uuid())
+  channel   String // ex: "facebook", "instagram", "email", "landing_page"...
+  type      ContentType
+  status    ContentPieceStatus @default(DRAFT)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  versions ContentVersion[] @relation("PieceVersions")
+
+  currentVersionId String?         @unique
+  currentVersion   ContentVersion? @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+
+  calendarEntries CalendarEntry[]
+
+  @@index([campaignId])
+  @@index([organizationId])
+  @@map("content_pieces")
+}
+
+// Chaque édition crée une nouvelle version — jamais d'écrasement. `label` distingue une
+// variation (A/B/C, pour tester plusieurs angles créatifs) d'une simple révision
+// chronologique (label=null) : deux versions partageant le même variantGroup mais un label
+// différent sont des alternatives concurrentes du même contenu, pas une évolution dans le
+// temps de l'une vers l'autre.
+model ContentVersion {
+  id              String   @id @default(uuid())
+  versionNumber   Int
+  label           String? // null = révision principale ; "A"/"B"/"C" = variation
+  variantGroup    Int? // regroupe les variations générées ensemble, pour affichage côte à côte
+  body            String?
+  changeNote      String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  contentPieceId String
+  contentPiece   ContentPiece @relation("PieceVersions", fields: [contentPieceId], references: [id], onDelete: Cascade)
+
+  assetId String?
+  asset   Asset?  @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  currentFor ContentPiece? @relation("CurrentVersion")
+
+  publishedPosts PublishedPost[]
+  contentMetrics ContentMetric[]
+
+  @@index([contentPieceId])
+  @@map("content_versions")
+}
+
+// Calendrier éditorial : planifie QUAND un ContentPiece doit être diffusé sur un canal
+// connecté. ScheduledPublishingService (cron) déclenche la publication réelle à l'heure dite
+// en repassant par PublishingService — donc soumise aux mêmes garde-fous (campagne APPROVED,
+// abonnement actif, idempotence) que toute publication manuelle.
+model CalendarEntry {
+  id           String              @id @default(uuid())
+  scheduledAt  DateTime
+  status       CalendarEntryStatus @default(SCHEDULED)
+  errorMessage String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  contentPieceId String
+  contentPiece   ContentPiece @relation(fields: [contentPieceId], references: [id], onDelete: Cascade)
+
+  socialConnectionId String
+  socialConnection    SocialConnection @relation(fields: [socialConnectionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([scheduledAt])
+  @@map("calendar_entries")
+}
+
+// Brand Brain — mémoire qui s'enrichit dans le temps, contrairement à BrandKit (statique,
+// édité manuellement). Alimentée automatiquement à des points clés du cycle de vie d'une
+// campagne (publication, recommandation Optimizer notable), consommée par
+// BrandService.buildPromptContext() pour que chaque nouvelle génération bénéficie de ce qui
+// a été appris des campagnes précédentes — c'est ce qui transforme un simple formulaire de
+// charte graphique en mémoire de marque qui apprend.
+model BrandMemoryEntry {
+  id        String          @id @default(uuid())
+  type      BrandMemoryType
+  content   String
+  createdAt DateTime        @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  sourceCampaignId String?
+
+  @@index([organizationId])
+  @@map("brand_memory_entries")
+}
+
+// Traçabilité IA — cf. chapitre 10.14 du business plan
+// Traçabilité IA (Économie de l'IA) : CHAQUE appel à un fournisseur d'IA, quelle que soit
+// son origine (génération de campagne, modération, cohérence de marque, Optimizer nocturne),
+// doit produire une ligne ici. C'est AiGatewayService qui garantit cette exhaustivité — aucun
+// service métier n'appelle un fournisseur d'IA sans passer par lui (cf. sa documentation).
+model AiGeneration {
+  id             String           @id @default(uuid())
+  taskType       String // ex: "generateText", "generateImage", "generateVideo", "analyzeImage", "moderateText"
+  purpose        String           @default("campaign_generation") // campaign_generation | moderation | brand_consistency | optimizer
+  provider       String // ex: "openai", "anthropic", "google"
+  model          String
+  promptVersion  String?
+  prompt         String
+  status         GenerationStatus @default(PENDING)
+  costEstimate   Float?
+  tokensUsed     Int?
+  durationMs     Int?
+  resultUrl      String?
+  errorMessage   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  asset Asset? // relation inverse — cf. Asset.generationId
+
+  @@index([organizationId])
+  @@index([organizationId, purpose])
+  @@index([campaignId])
+  @@map("ai_generations")
+}
+
+model Subscription {
+  id                String   @id @default(uuid())
+  plan              String   @default("starter") // starter | growth | business | enterprise
+  aiCreditsIncluded Int      @default(1000) // quota du plan, remis à 0 (aiCreditsUsed) à chaque cycle Stripe
+  aiCreditsUsed     Int      @default(0)
+
+  // Solde des packs de crédits achetés ponctuellement (cf. StripeService.createCreditPackCheckoutSession)
+  // — jamais réinitialisé par le renouvellement mensuel, contrairement à aiCreditsUsed.
+  // Consommé en PRIORITÉ sur le quota du plan (cf. EntitlementsService.consumeCredits) :
+  // un client qui a payé pour des crédits supplémentaires ne doit jamais les voir se
+  // reconduire indéfiniment (ancien bug : ils gonflaient aiCreditsIncluded de façon
+  // permanente) ni disparaître avant d'avoir été réellement utilisés.
+  extraCredits Int @default(0)
+
+  // Stripe — moteur de facturation SaaS
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  stripePriceId        String?
+  status               String    @default("trialing") // trialing | active | past_due | canceled | expired
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean   @default(false) // résiliation programmée en fin de période (pas immédiate)
+  trialEndsAt          DateTime?
+  trialUsed            Boolean   @default(false) // empêche de relancer un essai après résiliation
+
+  // Budget réel (en $, coût fournisseur) — distinct des crédits IA, qui sont une unité
+  // commerciale gamifiée (cf. CREDIT_COSTS dans plan-catalog.ts) ne reflétant pas
+  // nécessairement le coût réel payé aux fournisseurs. Un plafond optionnel indépendant
+  // protège contre une dérive de coût même si le nombre de crédits semble encore correct
+  // (ex: un fournisseur augmente ses tarifs sans que la grille de crédits soit mise à jour).
+  monthlyBudgetUsd Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// Invitation à rejoindre une organisation — cœur du multi-tenant/équipes. Le token est
+// l'unique preuve de possession du lien d'invitation ; l'email doit en plus correspondre
+// au compte qui accepte, pour empêcher qu'un lien intercepté soit utilisé par un tiers.
+model Invitation {
+  id              String           @id @default(uuid())
+  email           String
+  role            Role             @default(EDITOR)
+  token           String           @unique @default(uuid())
+  status          InvitationStatus @default(PENDING)
+  invitedByUserId String
+  invitedByEmail  String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime         @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitations")
+}
+
+// Connexion OAuth à un réseau social — un tenant peut connecter plusieurs comptes
+// (ex: sa page Facebook ET son compte LinkedIn). Les tokens sont chiffrés au repos
+// en production (cf. note dans SocialConnectionsService).
+model SocialConnection {
+  id                  String            @id @default(uuid())
+  platform            SocialPlatform
+  externalAccountId   String // ID du compte/page côté plateforme
+  externalAccountName String?
+  accessToken         String // chiffré au repos en production
+  refreshToken        String?
+  tokenExpiresAt      DateTime?
+  scopes              String? // scopes OAuth accordés, séparés par des virgules
+  status              ConnectionStatus  @default(ACTIVE)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  publishedPosts PublishedPost[]
+  calendarEntries CalendarEntry[]
+
+  @@unique([organizationId, platform, externalAccountId])
+  @@index([organizationId])
+  @@map("social_connections")
+}
+
+// Trace chaque publication effective sur un réseau, avec l'ID externe retourné
+// par la plateforme — nécessaire pour l'audit et le futur rapatriement des stats.
+// Publication idempotente (Intégrations Production) : la contrainte d'unicité sur
+// (campaignId, socialConnectionId) garantit qu'il ne peut jamais exister plus d'une ligne
+// pour "cette campagne diffusée sur ce canal" — un appel répété (retry client, double clic,
+// nouvelle tentative après timeout réseau) met à jour la ligne existante au lieu d'en créer
+// une nouvelle, ce qui serait une publication en double sur la plateforme réelle.
+model PublishedPost {
+  id             String         @id @default(uuid())
+  platform       SocialPlatform
+  externalPostId String?
+  status         PublishStatus  @default(PENDING)
+  errorMessage   String?
+  attemptCount   Int            @default(0) // nombre de tentatives (initiale + retries), pour audit/alerting
+  publishedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organizationId String
+  campaignId     String
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  socialConnectionId String
+  socialConnection    SocialConnection @relation(fields: [socialConnectionId], references: [id], onDelete: Cascade)
+
+  // Quelle créative précise a été diffusée — chaînon manquant sans lequel l'analytics ne
+  // peut jamais redescendre au niveau création (Content Studio) : sans cette référence,
+  // impossible de savoir laquelle de deux variations A/B a réellement été publiée.
+  contentVersionId String?
+  contentVersion   ContentVersion? @relation(fields: [contentVersionId], references: [id], onDelete: SetNull)
+
+  contentMetrics ContentMetric[]
+
+  @@unique([campaignId, socialConnectionId])
+  @@index([campaignId])
+  @@index([organizationId])
+  @@map("published_posts")
+}
+
+// Connexion à une boutique e-commerce pour importer un catalogue produit
+// (Module 3 — Product Intelligence : "L'utilisateur pourra envoyer... une boutique Shopify").
+model StoreConnection {
+  id           String            @id @default(uuid())
+  platform     EcommercePlatform
+  storeUrl     String
+  accessToken  String? // Shopify: token OAuth / admin API token
+  apiKey       String? // WooCommerce / Prestashop: clé API
+  apiSecret    String? // WooCommerce: secret API
+  status       ConnectionStatus  @default(ACTIVE)
+  lastSyncedAt DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  importedProducts ImportedProduct[]
+
+  @@index([organizationId])
+  @@map("store_connections")
+}
+
+model ImportedProduct {
+  id          String   @id @default(uuid())
+  externalId  String
+  name        String
+  description String?
+  priceAmount Float?
+  currency    String?
+  imageUrl    String?
+  raw         Json? // charge utile brute de l'API source, pour audit/débogage
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  storeConnectionId String
+  storeConnection    StoreConnection @relation(fields: [storeConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([storeConnectionId, externalId])
+  @@index([organizationId])
+  @@map("imported_products")
+}
+
+// Trace chaque vérification de modération exécutée sur une campagne — un enregistrement
+// par contenu et par type de vérification, pour un audit complet (qui a été vérifié,
+// avec quel résultat, par quel moteur) avant toute décision d'approbation humaine.
+model ModerationCheck {
+  id         String              @id @default(uuid())
+  checkType  ModerationCheckType
+  status     ModerationStatus
+  provider   String // ex: "openai-moderation", "openai-vision-claims", "gpt-vision-trademark"
+  summary    String? // résumé lisible du verdict, affiché au validateur humain
+  flags      Json? // détail structuré des signalements (catégorie, extrait, sévérité)
+  createdAt  DateTime            @default(now())
+
+  organizationId String
+  campaignId     String
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  contentId String? // null si la vérification porte sur la campagne dans son ensemble
+
+  @@index([campaignId])
+  @@index([organizationId])
+  @@map("moderation_checks")
+}
+
+// Score de cohérence de marque (différenciateur produit) : vérifie qu'une génération
+// respecte le Brand Kit (ton, valeurs, palette) avant même la revue humaine — signale les
+// écarts sans jamais bloquer, contrairement à ModerationCheck qui gère la sécurité/légalité.
+model BrandConsistencyCheck {
+  id        String   @id @default(uuid())
+  label     String   // pièce de contenu vérifiée : "copywriting", "strategy", "visual"...
+  score     Int      // 0-100
+  provider  String   // ex: "openai-brand-text", "openai-brand-vision"
+  summary   String?
+  issues    Json?    // détail structuré : [{issue, suggestion}]
+  createdAt DateTime @default(now())
+
+  organizationId String
+  campaignId     String
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([organizationId])
+  @@map("brand_consistency_checks")
+}
+
+// Snapshot de performance d'une campagne publiée, alimenté par les insights des plateformes
+// sociales connectées — sert de base à l'AI Optimizer nocturne (Module 16).
+model CampaignMetric {
+  id              String          @id @default(uuid())
+  platform        SocialPlatform?
+  periodStart     DateTime
+  periodEnd       DateTime
+  impressions     Int?
+  clicks          Int?
+  conversions     Int?
+  spend           Float?
+  conversionValue Float? // revenu attribué — sans lui, ROAS ne peut jamais être calculé, seulement estimé
+  ctr             Float?
+  cpa             Float?
+  roas            Float?
+  raw             Json?
+  createdAt       DateTime        @default(now())
+
+  organizationId String
+  campaignId     String
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([organizationId])
+  @@index([campaignId, platform])
+  @@map("campaign_metrics")
+}
+
+// Performance au niveau créatif — ce qui manquait pour vraiment exploiter les variations
+// A/B du Content Studio : sans ceci, impossible de savoir laquelle de deux versions d'un
+// même contenu a réellement mieux performé, seulement la performance agrégée de la campagne.
+model ContentMetric {
+  id              String   @id @default(uuid())
+  periodStart     DateTime
+  periodEnd       DateTime
+  impressions     Int?
+  clicks          Int?
+  conversions     Int?
+  spend           Float?
+  conversionValue Float?
+  ctr             Float?
+  createdAt       DateTime @default(now())
+
+  organizationId String
+  campaignId     String
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  contentVersionId String
+  contentVersion   ContentVersion @relation(fields: [contentVersionId], references: [id], onDelete: Cascade)
+
+  publishedPostId String?
+  publishedPost   PublishedPost? @relation(fields: [publishedPostId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId])
+  @@index([contentVersionId])
+  @@map("content_metrics")
+}
+
+// Recommandation générée par l'AI Optimizer nocturne — jamais appliquée automatiquement :
+// un humain (Marketing Manager+) doit explicitement l'appliquer ou l'écarter, dans la même
+// logique que l'approbation de campagne (l'IA propose, l'humain décide).
+// Recommandation générée par l'AI Optimizer nocturne — jamais appliquée automatiquement :
+// un humain (Marketing Manager+) doit explicitement l'appliquer ou l'écarter, dans la même
+// logique que l'approbation de campagne.
+//
+// Mesurable : measuredImpact ferme la boucle "recommandation -> appliquée -> effet réel",
+// renseigné par OptimizerOutcomeService quelques jours après application (comparaison des
+// métriques avant/après). automationEligible prépare — sans l'activer — l'automatisation
+// contrôlée évoquée pour une phase ultérieure : certains types d'action (ex: pause_channel)
+// sont par nature plus sûrs à automatiser qu'un changement créatif, qui exige toujours un
+// jugement humain. Aucune automatisation n'est exécutée dans cette version (cf. AutomationService).
+model OptimizationRecommendation {
+  id         String                @id @default(uuid())
+  summary    String
+  details    Json                  // {performance, actions:[{type, description, expectedImpact}]}
+  status     RecommendationStatus  @default(PENDING)
+  createdAt  DateTime              @default(now())
+
+  reviewedByUserId String?
+  reviewedByEmail  String?
+  reviewedAt       DateTime?
+
+  automationEligible Boolean   @default(false)
+  measuredImpact     Json?     // {metric, before, after, delta} — renseigné après coup
+  outcomeCheckedAt   DateTime?
+
+  organizationId String
+  campaignId     String
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([organizationId])
+  @@map("optimization_recommendations")
+}
+
+// Module 18 — Marketplace simplifié : bibliothèque de templates de campagnes réutilisables.
+// isSystem=true pour les templates fournis par Campaign-ai (par secteur) ; organizationId
+// renseigné pour un template créé par un client à partir d'une de ses propres campagnes.
+model CampaignTemplate {
+  id               String         @id @default(uuid())
+  name             String
+  sector           CampaignSector @default(GENERAL)
+  description      String?
+  defaultObjective String?
+  defaultChannels  Json?          // string[]
+  toneHint         String?
+  structureHint    Json?          // guidance pour l'AI Orchestrator: angle d'analyse, archétype de persona, style de CTA
+  isSystem         Boolean        @default(false)
+  usageCount       Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  campaigns Campaign[]
+
+  @@index([organizationId])
+  @@index([sector])
+  @@map("campaign_templates")
+}
+
+// Piste d'audit — Tests, Sécurité & Observabilité. Distincte des logs applicatifs
+// (NestJS Logger, texte non structuré, non interrogeable, non retenu durablement) : chaque
+// action sensible produit une ligne durable et interrogeable, exigence de conformité de base
+// pour un vrai SaaS B2B (qui a fait quoi, quand, sur quelle ressource). Écrite en mode
+// best-effort (jamais bloquante : une panne d'écriture d'audit ne doit jamais faire échouer
+// l'action métier elle-même — cf. AuditService.record()).
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String   // ex: "campaign.approved", "member.role_changed", "billing.plan_changed"
+  resourceType String // ex: "Campaign", "Membership", "Subscription"
+  resourceId String?
+  metadata   Json?    // détail structuré propre à l'action (ancien rôle/nouveau rôle, montant, etc.)
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  organizationId String? // pas de relation FK stricte : une piste d'audit doit survivre
+  // même si l'organisation ou l'acteur sont supprimés plus tard — jamais de cascade ici.
+  actorUserId    String? // null pour une action système (cron, webhook)
+  actorEmail     String? // dénormalisé — reste lisible même si l'utilisateur est supprimé plus tard
+
+  @@index([organizationId])
+  @@index([organizationId, action])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Conformité & Exploitation
+// ---------------------------------------------------------------------------
+
+enum PolicyType {
+  TERMS_OF_SERVICE
+  PRIVACY_POLICY
+  AI_DISCLOSURE // AI Act — information de l'utilisateur sur l'usage de systèmes d'IA
+}
+
+// RGPD — preuve de consentement horodatée et versionnée (registre des traitements, Article 30
+// en filigrane) : à chaque évolution des CGU/politique de confidentialité, une nouvelle version
+// doit être acceptée. Ne jamais écraser une acceptation existante — chaque ligne est un fait
+// juridique daté, conservé même après suppression du compte (cf. DataDeletionService).
+model PolicyAcceptance {
+  id         String     @id @default(uuid())
+  policyType PolicyType
+  version    String // ex: "2026-01-01"
+  acceptedAt DateTime   @default(now())
+  ipAddress  String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("policy_acceptances")
+}
+
+enum NotificationType {
+  CAMPAIGN_READY_FOR_REVIEW
+  CAMPAIGN_PUBLISHED
+  CAMPAIGN_REJECTED
+  OPTIMIZER_RECOMMENDATION
+  TRIAL_ENDING_SOON
+  TRIAL_EXPIRED
+  PAYMENT_FAILED
+  TEAM_INVITATION
+  SUPPORT_REPLY
+}
+
+// Notification in-app, doublée d'un envoi email best-effort (cf. NotificationsService) —
+// même principe que AuditLog : l'écriture de la notification ne doit jamais faire échouer
+// l'action métier qui l'a déclenchée.
+model Notification {
+  id        String           @id @default(uuid())
+  type      NotificationType
+  title     String
+  body      String
+  link      String? // chemin frontend vers la ressource concernée (ex: "/campaigns/:id")
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  organizationId String?
+  userId         String
+  user           User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model SupportTicket {
+  id        String                 @id @default(uuid())
+  subject   String
+  message   String
+  status    SupportTicketStatus    @default(OPEN)
+  priority  SupportTicketPriority  @default(NORMAL)
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+
+  organizationId String?
+  userId         String
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  replies SupportTicketReply[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("support_tickets")
+}
+
+model SupportTicketReply {
+  id        String   @id @default(uuid())
+  message   String
+  isStaff   Boolean  @default(false) // distingue une réponse de l'équipe Campaign-ai vs du client
+  createdAt DateTime @default(now())
+
+  ticketId String
+  ticket   SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  authorEmail String? // dénormalisé, lisible même si l'auteur est supprimé plus tard
+
+  @@index([ticketId])
+  @@map("support_ticket_replies")
+}
+
+// Centre d'aide — CMS minimal pour publier de la documentation utilisateur sans déploiement
+// de code (contrairement au reste de l'API, ce contenu change au fil de l'eau).
+model HelpArticle {
+  id        String   @id @default(uuid())
+  slug      String   @unique
+  title     String
+  body      String // Markdown
+  category  String?
+  published Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published])
+  @@map("help_articles")
+}

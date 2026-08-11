@@ -1,0 +1,198 @@
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { PrismaService } from '../prisma/prisma.service';
+import { CAMPAIGN_GENERATION_QUEUE } from '../queue/queue.module';
+import { CreateCampaignDto } from './dto/campaign.dto';
+import { RejectCampaignDto } from './dto/approval.dto';
+import { CampaignTemplatesService } from '../campaign-templates/campaign-templates.service';
+import { EntitlementsService } from '../plans/entitlements.service';
+
+export interface ApprovalActor {
+  userId: string;
+  email: string;
+}
+
+@Injectable()
+export class CampaignsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(CAMPAIGN_GENERATION_QUEUE) private readonly generationQueue: Queue,
+    private readonly templatesService: CampaignTemplatesService,
+    private readonly entitlements: EntitlementsService,
+  ) {}
+
+  // Isolation multi-tenant systématique : toute requête est scopée par organizationId.
+  async list(organizationId: string) {
+    return this.prisma.campaign.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getById(organizationId: string, campaignId: string) {
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id: campaignId, organizationId },
+      include: {
+        contentPieces: { include: { currentVersion: { include: { asset: true } } } },
+        generations: true,
+        moderationChecks: true,
+        brandConsistencyChecks: true,
+        metrics: { orderBy: { createdAt: 'desc' }, take: 10 },
+        optimizationRecommendations: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+    if (!campaign) throw new NotFoundException('Campagne introuvable');
+    return campaign;
+  }
+
+  // Crée la campagne en base (status IN_PROGRESS) puis empile un job asynchrone
+  // pour lancer l'orchestration IA — l'API répond sans attendre la génération.
+  // Le statut suivant n'est jamais PUBLISHED directement : le worker fait passer
+  // la campagne par READY_FOR_REVIEW (ou REJECTED si la modération bloque).
+  // Si dto.templateId est renseigné (Module 18), les champs non fournis par l'utilisateur
+  // sont complétés par les valeurs par défaut du template, et l'Orchestrator reçoit ses
+  // indications (ton, angle d'analyse, archétype de persona) pour guider la génération.
+  async create(organizationId: string, dto: CreateCampaignDto) {
+    // Garde-fou SaaS : aucune création de campagne ne doit contourner le plan souscrit.
+    // Ordre volontaire : d'abord l'abonnement (le plus bloquant), puis les quotas fins —
+    // pas la peine de calculer le reste si l'organisation n'a même pas d'accès actif.
+    await this.entitlements.assertActiveSubscription(organizationId);
+    await this.entitlements.assertActiveCampaignAvailable(organizationId);
+    await this.entitlements.assertCreditsAvailable(organizationId);
+
+    let objective = dto.objective;
+    let channels = dto.channels ?? [];
+    let templateHints: { toneHint?: string; analysisAngle?: string; personaArchetype?: string; ctaStyle?: string } | undefined;
+
+    if (dto.templateId) {
+      const template = await this.templatesService.getById(organizationId, dto.templateId);
+      objective = objective || template.defaultObjective || '';
+      channels = channels.length > 0 ? channels : ((template.defaultChannels as string[] | null) ?? []);
+      templateHints = {
+        toneHint: template.toneHint ?? undefined,
+        ...(template.structureHint as Record<string, string> | null),
+      };
+    }
+
+    if (channels.length > 0) {
+      await this.entitlements.assertChannelAvailable(organizationId, channels.length);
+      // Note : la restriction PAR PLATEFORME (ex: essai limité à Meta/LinkedIn, cf.
+      // PlanDefinition.allowedChannels) n'est volontairement PAS vérifiée ici — `channels`
+      // utilise un vocabulaire de slugs internes ('facebook','tiktok'...) pour le ciblage
+      // du contenu généré, distinct de l'enum SocialPlatform ('META_FACEBOOK'...) utilisé
+      // par les connexions OAuth réelles. La vérification faisant autorité a lieu dans
+      // PublishingService.publishToChannel(), au moment où une plateforme réelle est
+      // effectivement sollicitée — c'est le seul moment où un canal non autorisé aurait un
+      // coût ou un risque réel ; le choisir en amont dans le wizard reste possible, seule
+      // la diffusion effective est bloquée.
+    }
+
+    const campaign = await this.prisma.campaign.create({
+      data: {
+        organizationId,
+        name: dto.name,
+        objective,
+        budget: dto.budget,
+        channels,
+        templateId: dto.templateId,
+        status: 'IN_PROGRESS',
+      },
+    });
+
+    if (dto.templateId) await this.templatesService.incrementUsage(dto.templateId);
+
+    await this.generationQueue.add('generate', {
+      organizationId,
+      campaignId: campaign.id,
+      productDescription: dto.productDescription,
+      objective,
+      channels,
+      templateHints,
+    });
+
+    return campaign;
+  }
+
+  // Validation humaine obligatoire (garde-fou n°1) : seul un rôle MARKETING_MANAGER
+  // ou supérieur peut approuver (appliqué via @Roles sur le controller). Une campagne
+  // ne peut être approuvée que depuis READY_FOR_REVIEW — jamais depuis DRAFT ou REJECTED
+  // directement, pour forcer un passage par la génération + modération à chaque fois.
+  async approve(organizationId: string, campaignId: string, actor: ApprovalActor) {
+    const campaign = await this.getById(organizationId, campaignId);
+
+    if (campaign.status !== 'READY_FOR_REVIEW') {
+      throw new BadRequestException(
+        `Impossible d'approuver une campagne au statut "${campaign.status}" — seule une campagne "READY_FOR_REVIEW" peut être approuvée`,
+      );
+    }
+    if (campaign.moderationVerdict === 'BLOCKED') {
+      // Filet de sécurité : ne devrait jamais arriver puisque le worker rejette
+      // automatiquement en cas de BLOCKED, mais on refuse explicitement quand même.
+      throw new ForbiddenException('Cette campagne a été bloquée par la modération automatique et ne peut pas être approuvée');
+    }
+
+    return this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: {
+        status: 'APPROVED',
+        approvedByUserId: actor.userId,
+        approvedByEmail: actor.email,
+        approvedAt: new Date(),
+        rejectionReason: null,
+      },
+    });
+  }
+
+  // Rejet humain explicite (distinct du rejet automatique par modération) : un validateur
+  // peut refuser une campagne pour des raisons éditoriales même si la modération l'a laissée passer.
+  async reject(organizationId: string, campaignId: string, actor: ApprovalActor, dto: RejectCampaignDto) {
+    const campaign = await this.getById(organizationId, campaignId);
+
+    if (!['READY_FOR_REVIEW', 'APPROVED'].includes(campaign.status)) {
+      throw new BadRequestException(`Impossible de rejeter une campagne au statut "${campaign.status}"`);
+    }
+
+    return this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: {
+        status: 'REJECTED',
+        rejectionReason: `Rejet manuel par ${actor.email} : ${dto.reason}`,
+        approvedByUserId: null,
+        approvedByEmail: null,
+        approvedAt: null,
+      },
+    });
+  }
+
+  // Repasse une campagne rejetée en génération (ex: après correction du produit/objectif) —
+  // évite de devoir recréer une campagne de zéro après un rejet.
+  async regenerate(organizationId: string, campaignId: string, dto: CreateCampaignDto) {
+    const campaign = await this.getById(organizationId, campaignId);
+    if (campaign.status !== 'REJECTED') {
+      throw new BadRequestException('Seule une campagne rejetée peut être régénérée');
+    }
+    await this.entitlements.assertActiveSubscription(organizationId);
+    await this.entitlements.assertCreditsAvailable(organizationId);
+
+    await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: {
+        status: 'IN_PROGRESS',
+        moderationVerdict: null,
+        rejectionReason: null,
+        channels: dto.channels ?? campaign.channels ?? undefined,
+      },
+    });
+
+    await this.generationQueue.add('generate', {
+      organizationId,
+      campaignId,
+      productDescription: dto.productDescription,
+      objective: dto.objective ?? campaign.objective,
+      channels: dto.channels ?? (campaign.channels as string[] | null) ?? [],
+    });
+
+    return this.getById(organizationId, campaignId);
+  }
+}
