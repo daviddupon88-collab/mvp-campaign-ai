@@ -2,6 +2,7 @@ import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logge
 import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
 import { RequestContextService } from '../logging/request-context.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 // Filtre global : capture TOUTE exception non gérée, l'envoie à Sentry (si configuré) avec
 // le requestId en contexte pour pouvoir corréler une alerte Sentry avec les logs structurés
@@ -11,7 +12,13 @@ import { RequestContextService } from '../logging/request-context.service';
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
 
-  constructor(private readonly requestContext?: RequestContextService) {}
+  constructor(
+    private readonly requestContext?: RequestContextService,
+    // Optionnel comme requestContext : ce filtre est instancié manuellement dans main.ts
+    // (avant que le conteneur Nest ne soit pleinement disponible pour certains cas), pas
+    // injecté via le système de DI standard.
+    private readonly prisma?: PrismaService,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
@@ -32,6 +39,23 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         Sentry.captureException(exception);
       });
       this.logger.error(`Erreur non gérée sur ${request.method} ${request.url}: ${exception}`);
+
+      // Journal d'erreurs HTTP dédié (README item 46) — distinct des générations IA/
+      // publications déjà tracées comme échouées (celles-ci restent des succès HTTP avec un
+      // statut métier FAILED). Best-effort et non bloquant, comme AuditService : ne retarde
+      // jamais l'envoi de la réponse déjà construite ci-dessous — fire-and-forget.
+      this.prisma?.httpErrorLog
+        .create({
+          data: {
+            method: request.method,
+            path: request.url,
+            statusCode: status,
+            message: exception instanceof Error ? exception.message : String(exception),
+            requestId: this.requestContext?.get()?.requestId,
+            organizationId: this.requestContext?.get()?.organizationId,
+          },
+        })
+        .catch((err) => this.logger.warn(`Échec d'écriture du journal d'erreurs HTTP: ${err}`));
     }
 
     // Une exception levée avec un objet (ex: PlanLimitExceededException, ou le format

@@ -172,6 +172,14 @@ function ErrorsTab() {
   return (
     <>
       <Card style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 13.5, marginTop: 0 }}>Erreurs serveur HTTP (5xx)</h3>
+        {data.httpErrors.length === 0 ? <p style={{ fontSize: 13, color: '#9a9992' }}>Aucune.</p> : data.httpErrors.map((e: any) => (
+          <div key={e.id} style={{ padding: '8px 0', borderTop: '1px solid #eee', fontSize: 12.5 }}>
+            <strong>{e.statusCode}</strong> {e.method} {e.path} — {e.message}
+          </div>
+        ))}
+      </Card>
+      <Card style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 13.5, marginTop: 0 }}>Générations IA échouées</h3>
         {data.failedAiGenerations.length === 0 ? <p style={{ fontSize: 13, color: '#9a9992' }}>Aucune.</p> : data.failedAiGenerations.map((g: any) => (
           <div key={g.id} style={{ padding: '8px 0', borderTop: '1px solid #eee', fontSize: 12.5 }}>

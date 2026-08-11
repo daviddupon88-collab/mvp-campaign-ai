@@ -946,3 +946,25 @@ model HelpArticle {
   @@index([published])
   @@map("help_articles")
 }
+
+// Journal d'erreurs HTTP dédié (README item 46) — distinct des générations IA et
+// publications déjà tracées comme échouées (AiGeneration.status/PublishedPost.status) :
+// celles-ci restent des succès HTTP (2xx) avec un statut métier FAILED. Ceci capture les
+// vraies erreurs serveur (5xx) au niveau HTTP — déjà envoyées à Sentry pour l'analyse
+// approfondie (cf. GlobalExceptionFilter), mais jusqu'ici non requêtables depuis le panneau
+// admin lui-même sans quitter l'application. Écrit en best-effort, comme AuditLog : un
+// échec d'écriture ici ne doit jamais retarder la réponse déjà en cours d'envoi.
+model HttpErrorLog {
+  id             String   @id @default(uuid())
+  method         String
+  path           String
+  statusCode     Int
+  message        String
+  requestId      String?
+  organizationId String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([statusCode])
+  @@map("http_error_logs")
+}

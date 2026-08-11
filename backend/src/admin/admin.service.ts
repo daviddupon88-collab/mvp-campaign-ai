@@ -247,7 +247,7 @@ export class AdminService {
   // vers Sentry (cf. GlobalExceptionFilter) pour l'analyse approfondie ; cette vue sert de
   // tableau de bord rapide sans avoir à ouvrir un outil externe pour un premier coup d'œil.
   async getRecentErrors(limit = 50) {
-    const [failedGenerations, failedPublications] = await Promise.all([
+    const [failedGenerations, failedPublications, httpErrors] = await Promise.all([
       this.prisma.aiGeneration.findMany({
         where: { status: 'FAILED' },
         select: { id: true, organizationId: true, taskType: true, provider: true, errorMessage: true, createdAt: true },
@@ -260,11 +260,18 @@ export class AdminService {
         orderBy: { createdAt: 'desc' },
         take: limit,
       }),
+      // Vraies erreurs serveur HTTP (5xx), distinctes des deux ci-dessus qui restent des
+      // succès HTTP avec un statut métier FAILED — cf. GlobalExceptionFilter, HttpErrorLog.
+      this.prisma.httpErrorLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      }),
     ]);
 
     return {
       failedAiGenerations: failedGenerations,
       failedPublications,
+      httpErrors,
     };
   }
 

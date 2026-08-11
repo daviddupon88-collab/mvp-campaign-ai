@@ -8,6 +8,7 @@ import { StructuredLoggerService } from './common/logging/structured-logger.serv
 import { RequestContextService } from './common/logging/request-context.service';
 import { GlobalExceptionFilter } from './common/observability/global-exception.filter';
 import { StorageService } from './storage/storage.service';
+import { PrismaService } from './prisma/prisma.service';
 
 async function bootstrap() {
   // Échec rapide si un secret critique manque ou est resté à sa valeur de développement —
@@ -28,7 +29,7 @@ async function bootstrap() {
   // Logger structuré JSON, avec ID de corrélation automatique par requête (cf. RequestContextService).
   const requestContext = app.get(RequestContextService);
   app.useLogger(new StructuredLoggerService(requestContext));
-  app.useGlobalFilters(new GlobalExceptionFilter(requestContext));
+  app.useGlobalFilters(new GlobalExceptionFilter(requestContext, app.get(PrismaService)));
 
   app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
   app.use(express.json());
