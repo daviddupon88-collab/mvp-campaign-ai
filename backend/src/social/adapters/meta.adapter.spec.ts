@@ -108,7 +108,7 @@ describe('MetaAdapter', () => {
       fetchMock.mockResolvedValue(jsonResponse({}, false, 500));
       const adapter = buildAdapter();
 
-      const result = await adapter.fetchInsights!({ accessToken: 't', externalPostId: 'post-1' });
+      const result = await adapter.fetchInsights!({ accessToken: 't', externalPostId: 'post-1', externalAccountId: 'page-1' });
       expect(result).toEqual({});
     });
 
@@ -123,7 +123,7 @@ describe('MetaAdapter', () => {
       );
       const adapter = buildAdapter();
 
-      const result = await adapter.fetchInsights!({ accessToken: 't', externalPostId: 'post-1' });
+      const result = await adapter.fetchInsights!({ accessToken: 't', externalPostId: 'post-1', externalAccountId: 'page-1' });
       expect(result.impressions).toBe(1000);
       expect(result.clicks).toBe(42);
     });

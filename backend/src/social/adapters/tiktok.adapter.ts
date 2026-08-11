@@ -8,6 +8,8 @@ import {
   PublishContentParams,
   PublishResult,
   AsyncPublishStatus,
+  FetchInsightsParams,
+  InsightsResult,
 } from './social-adapter.interface';
 import { SocialApiError } from './social-api-error';
 
@@ -130,5 +132,33 @@ export class TikTokAdapter implements SocialAdapter {
     if (status === 'PUBLISH_COMPLETE') return 'PUBLISHED';
     if (status === 'FAILED') return 'FAILED';
     return 'PROCESSING'; // PROCESSING_UPLOAD, PROCESSING_DOWNLOAD, SEND_TO_USER_INBOX, etc.
+  }
+
+  // Query Video List API. Limitation assumée : externalPostId stocké par ce module est le
+  // publish_id retourné par publish/video/init (identifiant du JOB de publication), pas le
+  // video_id final attribué à la vidéo publiée sur le compte — TikTok ne renvoie ce dernier
+  // que via checkPublishStatus() une fois PUBLISH_COMPLETE, non capturé ni persisté ailleurs
+  // dans ce module pour l'instant. En pratique les deux identifiants coïncident souvent, mais
+  // ce n'est pas garanti par la documentation — à fiabiliser en faisant persister le
+  // video_id réel par PublishingService au moment où checkPublishStatus() confirme la
+  // publication, plutôt que de réutiliser le publish_id ici.
+  async fetchInsights({ accessToken, externalPostId }: FetchInsightsParams): Promise<InsightsResult> {
+    const res = await fetch('https://open.tiktokapis.com/v2/video/query/?fields=id,view_count,like_count,comment_count,share_count', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filters: { video_ids: [externalPostId] } }),
+    });
+    if (!res.ok) return {}; // insights non-critiques : échec silencieux, pas de SocialApiError ici
+
+    const data = await res.json();
+    const video = data.data?.videos?.[0];
+    if (!video) return {};
+
+    return {
+      impressions: typeof video.view_count === 'number' ? video.view_count : undefined,
+      // Proxy d'engagement organique, même logique que MetaAdapter — pas un clic publicitaire strict.
+      clicks: (video.like_count ?? 0) + (video.comment_count ?? 0) + (video.share_count ?? 0),
+      raw: data,
+    };
   }
 }

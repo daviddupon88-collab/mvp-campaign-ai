@@ -127,7 +127,7 @@ export class AnalyticsIngestionService {
     id: string;
     platform: string;
     externalPostId: string | null;
-    socialConnection: { accessToken: string };
+    socialConnection: { accessToken: string; externalAccountId: string };
   }): Promise<RawInsights | null> {
     const adapter = this.connectionsService.getAdapterFor(post.platform);
 
@@ -138,6 +138,7 @@ export class AnalyticsIngestionService {
             adapter.fetchInsights!({
               accessToken: this.tokenCrypto.decrypt(post.socialConnection.accessToken),
               externalPostId: post.externalPostId!,
+              externalAccountId: post.socialConnection.externalAccountId,
             }),
           { label: `fetchInsights ${post.platform}`, maxAttempts: 2 },
         );

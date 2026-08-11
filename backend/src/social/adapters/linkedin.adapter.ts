@@ -7,6 +7,8 @@ import {
   OAuthTokenResult,
   PublishContentParams,
   PublishResult,
+  FetchInsightsParams,
+  InsightsResult,
 } from './social-adapter.interface';
 import { SocialApiError } from './social-api-error';
 
@@ -123,5 +125,28 @@ export class LinkedInAdapter implements SocialAdapter {
     }
     const postId = res.headers.get('x-restli-id') ?? 'unknown';
     return { externalPostId: postId };
+  }
+
+  // Organization Share Statistics API — contrairement à Meta/TikTok, LinkedIn exige l'URN de
+  // l'organisation (externalAccountId, ex: "urn:li:organization:12345") en plus de celui du
+  // partage : les statistiques sont scopées à la Page, pas interrogeables par ID de post seul.
+  async fetchInsights({ accessToken, externalPostId, externalAccountId }: FetchInsightsParams): Promise<InsightsResult> {
+    const params = new URLSearchParams({ q: 'organizationalEntity', organizationalEntity: externalAccountId });
+    params.append('shares[0]', externalPostId);
+
+    const res = await fetch(`https://api.linkedin.com/v2/organizationalEntityShareStatistics?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Restli-Protocol-Version': '2.0.0' },
+    });
+    if (!res.ok) return {}; // insights non-critiques : échec silencieux, pas de SocialApiError ici
+
+    const data = await res.json();
+    const stats = data.elements?.[0]?.totalShareStatistics;
+    if (!stats) return {};
+
+    return {
+      impressions: typeof stats.impressionCount === 'number' ? stats.impressionCount : undefined,
+      clicks: typeof stats.clickCount === 'number' ? stats.clickCount : undefined,
+      raw: data,
+    };
   }
 }

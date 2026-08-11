@@ -7,6 +7,8 @@ import {
   OAuthTokenResult,
   PublishContentParams,
   PublishResult,
+  FetchInsightsParams,
+  InsightsResult,
 } from './social-adapter.interface';
 import { SocialApiError } from './social-api-error';
 
@@ -181,5 +183,35 @@ export class GoogleAdsAdapter implements SocialAdapter {
     });
 
     return { externalPostId: adRes.results[0].resourceName };
+  }
+
+  // GAQL scopé au customer (externalAccountId) — un ad_group_ad n'est interrogeable que dans
+  // le contexte du compte client qui le possède, contrairement aux plateformes organiques.
+  // Les champs int64 (impressions, clicks, costMicros...) sont sérialisés en string par l'API
+  // REST Google Ads (convention proto3 JSON) — d'où le Number(...) systématique.
+  async fetchInsights({ accessToken, externalPostId, externalAccountId: customerId }: FetchInsightsParams): Promise<InsightsResult> {
+    if (!this.developerToken) return {};
+
+    const query = `SELECT metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM ad_group_ad WHERE ad_group_ad.resource_name = '${externalPostId}'`;
+
+    const res = await fetch(`${API_BASE}/customers/${customerId}/googleAds:search`, {
+      method: 'POST',
+      headers: this.headers(accessToken),
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) return {}; // insights non-critiques : échec silencieux, pas de SocialApiError ici
+
+    const data = await res.json();
+    const metrics = data.results?.[0]?.metrics;
+    if (!metrics) return {};
+
+    return {
+      impressions: metrics.impressions !== undefined ? Number(metrics.impressions) : undefined,
+      clicks: metrics.clicks !== undefined ? Number(metrics.clicks) : undefined,
+      spend: metrics.costMicros !== undefined ? Number(metrics.costMicros) / 1_000_000 : undefined,
+      conversions: metrics.conversions !== undefined ? Number(metrics.conversions) : undefined,
+      conversionValue: metrics.conversionsValue !== undefined ? Number(metrics.conversionsValue) : undefined,
+      raw: data,
+    };
   }
 }

@@ -41,6 +41,13 @@ export interface PublishResult {
 export interface FetchInsightsParams {
   accessToken: string;
   externalPostId: string;
+  // Requis par les vraies API de reporting LinkedIn (organizationalEntityShareStatistics)
+  // et Google Ads (GAQL scopé au customer) — l'ID de publication seul ne suffit pas à
+  // interroger les statistiques sur ces plateformes, contrairement à Meta/TikTok qui
+  // n'en ont pas besoin. Toujours renseigné par l'appelant (cf. AnalyticsIngestionService,
+  // qui le lit depuis SocialConnection.externalAccountId) ; les adaptateurs qui n'en ont
+  // pas besoin l'ignorent simplement.
+  externalAccountId: string;
 }
 
 export interface InsightsResult {
