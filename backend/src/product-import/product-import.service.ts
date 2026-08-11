@@ -1,9 +1,11 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { TokenCryptoService } from '../common/crypto/token-crypto.service';
 import { ShopifyAdapter } from './adapters/shopify.adapter';
 import { WooCommerceAdapter } from './adapters/woocommerce.adapter';
 import { PrestashopAdapter } from './adapters/prestashop.adapter';
 import { EcommerceAdapter } from './adapters/ecommerce-adapter.interface';
+import { assertPublicStoreUrl } from './store-url-guard';
 
 export interface ConnectStoreParams {
   organizationId: string;
@@ -23,6 +25,7 @@ export class ProductImportService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly tokenCrypto: TokenCryptoService,
     shopifyAdapter: ShopifyAdapter,
     wooCommerceAdapter: WooCommerceAdapter,
     prestashopAdapter: PrestashopAdapter,
@@ -43,6 +46,7 @@ export class ProductImportService {
   // Teste les identifiants puis crée la connexion boutique si valides — évite de stocker
   // des identifiants invalides et d'échouer silencieusement plus tard lors d'un import.
   async connectStore(params: ConnectStoreParams) {
+    await assertPublicStoreUrl(params.storeUrl);
     const adapter = this.getAdapter(params.platform);
     const credentials = {
       storeUrl: params.storeUrl,
@@ -54,17 +58,28 @@ export class ProductImportService {
     const isValid = await adapter.testConnection(credentials);
     if (!isValid) throw new BadRequestException('Connexion à la boutique impossible — vérifiez les identifiants');
 
+    // Chiffrés au repos au même titre que les tokens OAuth sociaux (cf. TokenCryptoService) :
+    // ce sont des secrets qui permettent d'agir au nom du client sur sa boutique (lire son
+    // catalogue), jamais stockés en clair en base.
     return this.prisma.storeConnection.create({
       data: {
         organizationId: params.organizationId,
         platform: params.platform as any,
         storeUrl: params.storeUrl,
-        accessToken: params.accessToken,
-        apiKey: params.apiKey,
-        apiSecret: params.apiSecret,
+        accessToken: this.encryptOptional(params.accessToken),
+        apiKey: this.encryptOptional(params.apiKey),
+        apiSecret: this.encryptOptional(params.apiSecret),
         status: 'ACTIVE',
       },
     });
+  }
+
+  private encryptOptional(value?: string): string | undefined {
+    return value ? this.tokenCrypto.encrypt(value) : undefined;
+  }
+
+  private decryptOptional(value: string | null): string | undefined {
+    return value ? this.tokenCrypto.decrypt(value) : undefined;
   }
 
   async listStores(organizationId: string) {
@@ -82,9 +97,18 @@ export class ProductImportService {
     });
     if (!store) throw new NotFoundException('Connexion boutique introuvable ou inactive');
 
+    // Revalidé à chaque synchronisation, pas seulement à la connexion initiale — cf.
+    // store-url-guard.ts (fenêtre de DNS rebinding).
+    await assertPublicStoreUrl(store.storeUrl);
+
     const adapter = this.getAdapter(store.platform);
     const products = await adapter.fetchProducts(
-      { storeUrl: store.storeUrl, accessToken: store.accessToken ?? undefined, apiKey: store.apiKey ?? undefined, apiSecret: store.apiSecret ?? undefined },
+      {
+        storeUrl: store.storeUrl,
+        accessToken: this.decryptOptional(store.accessToken),
+        apiKey: this.decryptOptional(store.apiKey),
+        apiSecret: this.decryptOptional(store.apiSecret),
+      },
       limit,
     );
 

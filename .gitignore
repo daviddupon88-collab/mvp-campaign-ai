@@ -8,3 +8,4 @@ dist/
 /frontend/playwright-report/
 /frontend/test-results/
 /.devtools/
+/backend/uploads/
