@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { validateGoogleAdsBody } from './google-ads-body-guard';
 
 export interface CreatePieceParams {
   organizationId: string;
@@ -89,6 +90,15 @@ export class ContentStudioService {
   // fait devenir la version courante. L'historique complet reste consultable via getById().
   async editContent(organizationId: string, pieceId: string, params: EditVersionParams) {
     const piece = await this.getById(organizationId, pieceId);
+
+    // La génération IA applique déjà les limites 30/90 caractères (troncature automatique,
+    // cf. AiOrchestratorService.parseGoogleAdsContent) — sans ce contrôle, une édition
+    // manuelle pouvait les dépasser silencieusement et produire une annonce rejetée par
+    // Google Ads au moment de la publication réelle.
+    if (piece.channel === 'googleads' && params.body) {
+      validateGoogleAdsBody(params.body);
+    }
+
     const nextVersionNumber = Math.max(0, ...piece.versions.filter((v) => !v.label).map((v) => v.versionNumber)) + 1;
 
     const version = await this.prisma.contentVersion.create({
