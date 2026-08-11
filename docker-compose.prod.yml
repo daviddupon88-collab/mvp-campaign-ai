@@ -5,7 +5,10 @@
 # ce fichier reste néanmoins un point de départ honnête pour une première mise en ligne,
 # pas une architecture Kubernetes multi-nœuds (cf. Phase 2/3 de la roadmap d'architecture).
 #
-# Utilisation : docker compose -f docker-compose.prod.yml --env-file backend/.env up -d
+# Utilisation : DOMAIN=votre-domaine.com docker compose -f docker-compose.prod.yml --env-file backend/.env up -d
+# Prérequis : un enregistrement DNS A/AAAA pointant DOMAIN vers l'IP de ce serveur, ports
+# 80/443 ouverts — Caddy se charge seul d'obtenir et renouveler le certificat TLS
+# (Let's Encrypt), rien d'autre à configurer manuellement.
 
 version: "3.9"
 
@@ -38,19 +41,47 @@ services:
     depends_on:
       - postgres
       - redis
-    ports:
-      - "3001:3001"
+    # Pas de port publié à l'hôte : seul Caddy (ci-dessous) est exposé publiquement,
+    # le backend n'est joignable que via le réseau Docker interne.
+    expose:
+      - "3001"
 
   frontend:
     build: ./frontend
     restart: unless-stopped
+    # NEXT_PUBLIC_API_URL doit être l'URL PUBLIQUE via Caddy (ex: https://votre-domaine.com/api),
+    # jamais l'adresse interne du conteneur backend : cette variable est intégrée en dur dans
+    # le bundle JS envoyé au navigateur au moment du build (`next build`), qui n'a lui-même
+    # aucun accès au réseau Docker interne.
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     depends_on:
       - backend
+    expose:
+      - "3000"
+
+  # Frontal TLS — termine HTTPS (certificat Let's Encrypt obtenu et renouvelé automatiquement
+  # par Caddy, cf. Caddyfile) et route vers backend/frontend en interne. Seul service exposé
+  # à l'extérieur du réseau Docker : répond au point 5 de la checklist de mise en production
+  # du README (« DNS et TLS ») — il ne reste plus que l'enregistrement DNS à créer.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
     ports:
-      - "3000:3000"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
 
 volumes:
   postgres_data:
   redis_data:
+  caddy_data:
+  caddy_config:

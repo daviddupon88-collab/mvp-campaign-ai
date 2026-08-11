@@ -1,0 +1,8 @@
+# Ce projet tourne sur des runners Linux (CI GitHub Actions, conteneurs Docker) même quand
+# il est édité sous Windows — un script shell commité avec des fins de ligne CRLF échoue au
+# démarrage (`$'\r': command not found`, shebang cassé). Force LF pour tout ce qui s'exécute.
+*.sh text eol=lf
+Dockerfile text eol=lf
+Caddyfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

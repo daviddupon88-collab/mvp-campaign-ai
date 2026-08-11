@@ -699,33 +699,43 @@ risque de désynchronisation entre un visiteur non connecté et un client exista
 
 **Ce qui est fourni** : `backend/Dockerfile` et `frontend/Dockerfile` (builds multi-étapes,
 utilisateur non-root, healthcheck natif pour le backend), `docker-compose.prod.yml`
-(topologie de référence mono-VM), job `docker-publish` dans la CI (publie les images sur
+(topologie de référence mono-VM, désormais avec Caddy en frontal TLS — cf. point 5),
+`Caddyfile`, `scripts/smoke-test.sh`, job `docker-publish` dans la CI (publie les images sur
 GitHub Container Registry à chaque merge sur `main`).
 
-**Ce qui reste à faire par vous, selon l'hébergeur choisi** — impossible à préconfigurer
-sans connaître la cible réelle :
+**Ce qui reste à faire par vous** — actions humaines/business qui ne peuvent pas être
+préconfigurées (compte réel, décision commerciale, ou revue par un tiers) :
 
 1. **Base de données et cache managés** — en production, préférer un Postgres/Redis managé
    (RDS, Neon, Upstash...) aux conteneurs de `docker-compose.prod.yml`, pensés pour un
-   premier déploiement mono-VM plutôt qu'une architecture à grande échelle.
+   premier déploiement mono-VM plutôt qu'une architecture à grande échelle. Il suffit de
+   pointer `DATABASE_URL`/`REDIS_HOST` vers le service managé — aucun changement de code.
 2. **Stripe en mode live** — remplacer les clés `sk_test_...` par les clés live, recréer les
    Price ID dans le Dashboard Stripe en mode live (les ID test et live sont distincts),
    enregistrer l'URL de webhook réelle (`https://votre-domaine.com/api/billing/webhook`)
    et copier le nouveau `STRIPE_WEBHOOK_SECRET`.
-3. **Secrets de production** — générer `TOKEN_ENCRYPTION_KEY`, `JWT_SECRET`,
-   `OAUTH_STATE_SECRET` avec `openssl rand -base64 32` (jamais réutiliser les valeurs de
-   développement — `validateEnv()` refuse de démarrer sinon, cf. chantier précédent).
+3. ~~Secrets de production~~ — génération : `openssl rand -base64 32` (×3, pour
+   `JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`, `OAUTH_STATE_SECRET`) ; à stocker dans le
+   gestionnaire de secrets de votre hébergeur, jamais dans un fichier commité —
+   `validateEnv()` refuse de démarrer en production avec les valeurs de développement.
 4. **Réviewer les apps OAuth** des réseaux sociaux en mode production (Meta, LinkedIn,
    Google Ads, TikTok) — chaque plateforme a son propre délai de validation, à anticiper
    avant le lancement, pas le jour J.
-5. **DNS et TLS** — domaine pointant vers le serveur, certificat TLS (Let's Encrypt via
-   Caddy/Traefik/nginx en frontal, non inclus dans les Dockerfiles fournis).
-6. **Migrations** — `npx prisma migrate deploy` (jamais `migrate dev` en production) avant
-   le premier démarrage.
+5. ~~DNS et TLS~~ — fourni : `Caddyfile` + service `caddy` dans `docker-compose.prod.yml`,
+   certificat Let's Encrypt obtenu et renouvelé automatiquement, aucune config TLS manuelle.
+   Il reste seulement à créer l'enregistrement DNS A/AAAA de votre domaine vers l'IP du
+   serveur et démarrer avec `DOMAIN=votre-domaine.com docker compose -f
+   docker-compose.prod.yml --env-file backend/.env up -d`.
+6. **Migrations** — `npm run prisma:migrate:deploy` (jamais `prisma:migrate`/`migrate dev`
+   en production) avant le premier démarrage.
 7. **Relecture juridique** des textes légaux (`legal-documents.ts`) — actuellement des
-   gabarits explicitement marqués comme tels (cf. chantier Conformité).
-8. **Fumée (smoke tests)** post-déploiement : `GET /health/ready` répond `200`, inscription
-   + connexion fonctionnent de bout en bout, un webhook Stripe test est bien reçu.
+   gabarits explicitement marqués comme tels (cf. chantier Conformité). Hors de portée d'un
+   assistant de code : nécessite un vrai juriste, pas une vérification automatisée.
+8. ~~Fumée (smoke tests)~~ post-déploiement — fourni : `BASE_URL=https://votre-domaine.com
+   ./scripts/smoke-test.sh` (health checks + inscription/connexion de bout en bout contre
+   l'API réelle). Reste manuel : déclencher un événement Stripe test (`stripe trigger
+   checkout.session.completed` avec la Stripe CLI, ou depuis le Dashboard) et vérifier dans
+   les logs applicatifs qu'il est bien reçu et traité.
 
 ### Tests pilotes
 

@@ -1,0 +1,22 @@
+{$DOMAIN} {
+	# Certificat TLS géré automatiquement (Let's Encrypt) — aucune configuration manuelle,
+	# c'est le principal argument de Caddy pour ce rôle de frontal TLS minimal.
+
+	# API backend, healthchecks et fichiers servis en mode STORAGE_PROVIDER=local (dev/petit
+	# déploiement uniquement — cf. avertissement dans StorageService, préférer S3/R2/GCS en
+	# production réelle).
+	handle /api/* {
+		reverse_proxy backend:3001
+	}
+	handle /uploads/* {
+		reverse_proxy backend:3001
+	}
+	handle /metrics {
+		reverse_proxy backend:3001
+	}
+
+	# Tout le reste : l'app Next.js (SSR/CSR, pages statiques).
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
