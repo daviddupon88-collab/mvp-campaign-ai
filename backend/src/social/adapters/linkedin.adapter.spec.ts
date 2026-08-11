@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { SocialApiError } from './social-api-error';
 import { LinkedInAdapter } from './linkedin.adapter';
 
 function buildAdapter() {
@@ -6,8 +7,8 @@ function buildAdapter() {
   return new LinkedInAdapter(config);
 }
 
-function jsonResponse(body: any, ok = true, status = 200) {
-  return { ok, status, json: async () => body, text: async () => JSON.stringify(body), headers: { get: () => null } } as unknown as Response;
+function jsonResponse(body: any, ok = true, status = 200, headerValue: string | null = null) {
+  return { ok, status, json: async () => body, text: async () => JSON.stringify(body), headers: { get: () => headerValue } } as unknown as Response;
 }
 
 describe('LinkedInAdapter.fetchInsights', () => {
@@ -50,5 +51,53 @@ describe('LinkedInAdapter.fetchInsights', () => {
 
     const result = await adapter.fetchInsights({ accessToken: 't', externalPostId: 'urn:li:ugcPost:123', externalAccountId: 'urn:li:organization:456' });
     expect(result).toEqual({});
+  });
+});
+
+describe('LinkedInAdapter.publish', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => { fetchMock = jest.fn(); global.fetch = fetchMock as any; });
+
+  it("publie via ugcPosts et récupère l'ID depuis l'en-tête x-restli-id", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}, true, 201, 'urn:li:ugcPost:789'));
+    const adapter = buildAdapter();
+
+    const result = await adapter.publish({ accessToken: 't', externalAccountId: 'urn:li:organization:456', caption: 'Bonjour' });
+    expect(result).toEqual({ externalPostId: 'urn:li:ugcPost:789' });
+  });
+
+  it('lève une SocialApiError sur un échec de publication', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: 'forbidden' }, false, 403));
+    const adapter = buildAdapter();
+
+    await expect(adapter.publish({ accessToken: 't', externalAccountId: 'urn:li:organization:456' })).rejects.toThrow(SocialApiError);
+  });
+});
+
+describe('LinkedInAdapter.exchangeCodeForToken', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => { fetchMock = jest.fn(); global.fetch = fetchMock as any; });
+
+  it("enchaîne l'échange de token puis la récupération de l'organisation administrée", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-1', refresh_token: 'refresh-1', expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonResponse({ elements: [{ organizationalTarget: 'urn:li:organization:456' }] }));
+
+    const adapter = buildAdapter();
+    const result = await adapter.exchangeCodeForToken({ code: 'code-1', redirectUri: 'https://app.example.com/callback' });
+
+    expect(result.accessToken).toBe('token-1');
+    expect(result.externalAccountId).toBe('urn:li:organization:456');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retombe sur un identifiant personnel si aucune organisation n'est administrée", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-1', expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonResponse({ elements: [] }));
+
+    const adapter = buildAdapter();
+    const result = await adapter.exchangeCodeForToken({ code: 'code-1', redirectUri: 'https://app.example.com/callback' });
+    expect(result.externalAccountId).toBe('urn:li:person:me');
   });
 });

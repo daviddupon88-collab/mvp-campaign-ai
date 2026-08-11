@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { SocialApiError } from './social-api-error';
 import { TikTokAdapter } from './tiktok.adapter';
 
 function buildAdapter() {
@@ -43,5 +44,62 @@ describe('TikTokAdapter.fetchInsights', () => {
 
     const result = await adapter.fetchInsights({ accessToken: 't', externalPostId: 'v1', externalAccountId: 'open-id-1' });
     expect(result).toEqual({});
+  });
+});
+
+describe('TikTokAdapter.publish', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => { fetchMock = jest.fn(); global.fetch = fetchMock as any; });
+
+  it('initie la publication PULL_FROM_URL et renvoie le publish_id', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: { publish_id: 'pub-123' } }));
+    const adapter = buildAdapter();
+
+    const result = await adapter.publish({ accessToken: 't', externalAccountId: 'open-id-1', mediaUrl: 'https://cdn.example.com/video.mp4', caption: 'Bonjour' });
+    expect(result).toEqual({ externalPostId: 'pub-123' });
+  });
+
+  it('refuse de publier sans mediaUrl (TikTok exige une vidéo)', async () => {
+    const adapter = buildAdapter();
+    await expect(adapter.publish({ accessToken: 't', externalAccountId: 'open-id-1' })).rejects.toThrow(SocialApiError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('lève une SocialApiError si TikTok ne renvoie aucun publish_id', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: {} }));
+    const adapter = buildAdapter();
+
+    await expect(adapter.publish({ accessToken: 't', externalAccountId: 'open-id-1', mediaUrl: 'https://cdn.example.com/video.mp4' })).rejects.toThrow(SocialApiError);
+  });
+});
+
+describe('TikTokAdapter.checkPublishStatus', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => { fetchMock = jest.fn(); global.fetch = fetchMock as any; });
+
+  it.each([
+    ['PUBLISH_COMPLETE', 'PUBLISHED'],
+    ['FAILED', 'FAILED'],
+    ['PROCESSING_UPLOAD', 'PROCESSING'],
+  ])('mappe le statut TikTok "%s" vers "%s"', async (tiktokStatus, expected) => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: { status: tiktokStatus } }));
+    const adapter = buildAdapter();
+
+    const status = await adapter.checkPublishStatus!('t', 'pub-123');
+    expect(status).toBe(expected);
+  });
+});
+
+describe('TikTokAdapter.exchangeCodeForToken', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => { fetchMock = jest.fn(); global.fetch = fetchMock as any; });
+
+  it('échange le code contre un token avec open_id', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ access_token: 'token-1', refresh_token: 'refresh-1', expires_in: 86400, open_id: 'open-id-1', scope: 'video.publish' }));
+    const adapter = buildAdapter();
+
+    const result = await adapter.exchangeCodeForToken({ code: 'code-1', redirectUri: 'https://app.example.com/callback' });
+    expect(result.accessToken).toBe('token-1');
+    expect(result.externalAccountId).toBe('open-id-1');
   });
 });

@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { SocialApiError } from './social-api-error';
 import { GoogleAdsAdapter } from './google-ads.adapter';
 
 function buildAdapter(hasDeveloperToken = true) {
@@ -52,5 +53,54 @@ describe('GoogleAdsAdapter.fetchInsights', () => {
 
     const result = await adapter.fetchInsights({ accessToken: 't', externalPostId: 'x', externalAccountId: '123' });
     expect(result).toEqual({});
+  });
+});
+
+describe('GoogleAdsAdapter.publish', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => { fetchMock = jest.fn(); global.fetch = fetchMock as any; });
+
+  it('enchaîne budget → campagne (PAUSED) → groupe → annonce, jamais ENABLED automatiquement', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ results: [{ resourceName: 'customers/123/campaignBudgets/1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ results: [{ resourceName: 'customers/123/campaigns/1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ results: [{ resourceName: 'customers/123/adGroups/1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ results: [{ resourceName: 'customers/123/adGroupAds/1~1' }] }));
+
+    const adapter = buildAdapter();
+    const result = await adapter.publish({ accessToken: 't', externalAccountId: '123', caption: 'Découvrez notre offre', linkUrl: 'https://example.com' });
+
+    expect(result).toEqual({ externalPostId: 'customers/123/adGroupAds/1~1' });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // Garde-fou sécurité (budget engagé réel) : la campagne créée est explicitement PAUSED.
+    const campaignBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(campaignBody.operations[0].create.status).toBe('PAUSED');
+  });
+
+  it('refuse de publier sans developer token configuré', async () => {
+    const adapter = buildAdapter(false);
+    await expect(adapter.publish({ accessToken: 't', externalAccountId: '123' })).rejects.toThrow(SocialApiError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('lève une SocialApiError si une étape de la chaîne mutate échoue', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'invalid' }, false, 400));
+    const adapter = buildAdapter();
+
+    await expect(adapter.publish({ accessToken: 't', externalAccountId: '123' })).rejects.toThrow(SocialApiError);
+  });
+});
+
+describe('GoogleAdsAdapter.exchangeCodeForToken', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => { fetchMock = jest.fn(); global.fetch = fetchMock as any; });
+
+  it("échange le code contre un token, en attente de sélection du compte client", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ access_token: 'token-1', refresh_token: 'refresh-1', expires_in: 3600 }));
+    const adapter = buildAdapter();
+
+    const result = await adapter.exchangeCodeForToken({ code: 'code-1', redirectUri: 'https://app.example.com/callback' });
+    expect(result.accessToken).toBe('token-1');
+    expect(result.externalAccountId).toBe('pending-customer-id-selection');
   });
 });
