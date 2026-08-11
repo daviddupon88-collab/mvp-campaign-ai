@@ -4,9 +4,10 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { useCurrentUser, canApprove } from '@/lib/use-current-user';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { Nav } from '@/components/nav';
 import { Card, Button, Textarea, StatusPill, ScoreBar, Tabs, ErrorText } from '@/components/ui';
+import { UpgradeModal } from '@/components/upgrade-modal';
 
 const GENERATION_STATUS_LABELS: Record<string, string> = {
   PENDING: 'En attente', RUNNING: 'En cours', SUCCEEDED: 'Terminé', FAILED: 'Échec',
@@ -202,6 +203,7 @@ function PublishBlock({ campaignId, onPublished }: { campaignId: string; onPubli
   const [connections, setConnections] = useState<any[]>([]);
   const [publishing, setPublishing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [limitError, setLimitError] = useState<ApiError | null>(null);
 
   useEffect(() => {
     api.listSocialConnections().then(setConnections).catch(() => setConnections([]));
@@ -214,7 +216,10 @@ function PublishBlock({ campaignId, onPublished }: { campaignId: string; onPubli
       await api.publishCampaign(campaignId, [{ socialConnectionId: connectionId }]);
       onPublished();
     } catch (err: any) {
-      setError(err.message);
+      // Plafond de publications ou de canal non autorisé (essai) : moment de conversion
+      // ciblé plutôt qu'un message d'erreur générique, même logique que /campaigns/new.
+      if (err instanceof ApiError && err.isPlanLimit) setLimitError(err);
+      else setError(err.message);
     } finally {
       setPublishing(null);
     }
@@ -222,6 +227,7 @@ function PublishBlock({ campaignId, onPublished }: { campaignId: string; onPubli
 
   return (
     <Card>
+      <UpgradeModal error={limitError} onClose={() => setLimitError(null)} />
       <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Publication</h2>
       <ErrorText message={error} />
       {connections.length === 0 ? (
@@ -505,6 +511,7 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
   const [optimizations, setOptimizations] = useState<any[]>(campaign.optimizationRecommendations ?? []);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [limitError, setLimitError] = useState<ApiError | null>(null);
 
   const load = useCallback(() => {
     api.listOptimizations(campaignId).then(setOptimizations).catch((err) => setError(err.message));
@@ -513,7 +520,12 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
   async function runNow() {
     setRunning(true); setError(null);
     try { await api.runOptimizerNow(); await load(); }
-    catch (err: any) { setError(err.message); }
+    catch (err: any) {
+      // Plafond d'analyses Optimizer (essai) : moment de conversion ciblé plutôt qu'un
+      // message d'erreur générique, même logique que /campaigns/new.
+      if (err instanceof ApiError && err.isPlanLimit) setLimitError(err);
+      else setError(err.message);
+    }
     finally { setRunning(false); }
   }
 
@@ -530,6 +542,7 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
 
   return (
     <>
+      <UpgradeModal error={limitError} onClose={() => setLimitError(null)} />
       <ErrorText message={error} />
       <div style={{ marginBottom: 16 }}>
         <Button onClick={runNow} disabled={running}>{running ? 'Analyse en cours...' : 'Lancer une analyse maintenant'}</Button>

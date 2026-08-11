@@ -3,9 +3,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { useCurrentUser, canManageTeam } from '@/lib/use-current-user';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { Nav } from '@/components/nav';
 import { Card, Button, Field, ErrorText, StatusPill } from '@/components/ui';
+import { UpgradeModal } from '@/components/upgrade-modal';
 
 const INVITABLE_ROLES = ['ADMIN', 'MARKETING_MANAGER', 'EDITOR', 'VIEWER']; // OWNER ne s'invite jamais, cf. TeamsService
 
@@ -18,6 +19,7 @@ export default function TeamSettingsPage() {
   const [role, setRole] = useState('EDITOR');
   const [error, setError] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
+  const [limitError, setLimitError] = useState<ApiError | null>(null);
 
   const load = useCallback(() => {
     api.listTeamMembers().then(setMembers).catch((err) => setError(err.message));
@@ -36,7 +38,12 @@ export default function TeamSettingsPage() {
       await api.inviteTeamMember({ email, role });
       setEmail('');
       load();
-    } catch (err: any) { setError(err.message); }
+    } catch (err: any) {
+      // Plafond de sièges atteint (essai ou payant) : moment de conversion ciblé plutôt
+      // qu'un message d'erreur générique, même logique que /campaigns/new.
+      if (err instanceof ApiError && err.isPlanLimit) setLimitError(err);
+      else setError(err.message);
+    }
     finally { setInviting(false); }
   }
 
@@ -68,6 +75,7 @@ export default function TeamSettingsPage() {
   return (
     <>
       <Nav />
+      <UpgradeModal error={limitError} onClose={() => setLimitError(null)} />
       <main style={{ maxWidth: 720, margin: '40px auto', padding: '0 16px' }}>
         <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>Équipe</h1>
         <ErrorText message={error} />
