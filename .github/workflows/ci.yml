@@ -110,15 +110,126 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Tests unitaires
+        run: npm run test -- --ci
+
       - name: Build
         run: npm run build
+
+  e2e-browser:
+    runs-on: ubuntu-latest
+
+    # Parcours réel dans un vrai navigateur (Playwright) contre le backend NestJS +
+    # PostgreSQL + Redis réels — pas de mocks réseau. Les jobs backend/frontend valident
+    # chaque côté séparément ; celui-ci est le seul à vérifier que les deux fonctionnent
+    # vraiment ENSEMBLE (inscription → onboarding → génération IA → approbation), cf.
+    # frontend/e2e/campaign-journey.spec.ts.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: campaignai
+          POSTGRES_PASSWORD: campaignai
+          POSTGRES_DB: campaignai
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U campaignai"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://campaignai:campaignai@localhost:5432/campaignai
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      JWT_SECRET: ci-test-secret-not-for-production
+      AI_MODE: mock
+      NODE_ENV: test
+      PORT: 3001
+      NEXT_PUBLIC_API_URL: http://localhost:3001/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Installer les dépendances backend
+        working-directory: backend
+        run: npm install
+
+      - name: Générer le client Prisma
+        working-directory: backend
+        run: npm run prisma:generate
+
+      - name: Appliquer les migrations
+        working-directory: backend
+        run: npx prisma migrate deploy
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      - name: Démarrer le backend en arrière-plan
+        working-directory: backend
+        run: nohup node dist/main.js > backend.log 2>&1 &
+
+      - name: Attendre que le backend soit prêt
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3001/health/ready && exit 0
+            sleep 2
+          done
+          echo "Backend jamais prêt — logs :" && cat backend/backend.log && exit 1
+
+      - name: Installer les dépendances frontend
+        working-directory: frontend
+        run: npm install
+
+      - name: Installer les navigateurs Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Tests Playwright (parcours utilisateur réel)
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Publier le rapport Playwright
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+
+      - name: Publier les logs backend
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: backend-logs
+          path: backend/backend.log
 
   # Publie les images Docker sur GitHub Container Registry — la partie de la CD qui ne
   # dépend d'aucune infrastructure cible spécifique (contrairement au déploiement effectif,
   # qui varie selon l'hébergeur choisi). Uniquement sur `main`, jamais sur une PR : une image
   # taguée `latest` ne doit correspondre qu'à du code déjà revu et fusionné.
   docker-publish:
-    needs: [backend, frontend]
+    needs: [backend, frontend, e2e-browser]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
