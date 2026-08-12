@@ -52,7 +52,7 @@ export default function TicketDetailPage() {
 
         {/* Message initial */}
         <Card style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 12, color: '#9a9992', marginBottom: 6 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
             {ticket.user?.email} · {new Date(ticket.createdAt).toLocaleString('fr-FR')}
           </div>
           <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{ticket.message}</div>
@@ -65,12 +65,12 @@ export default function TicketDetailPage() {
             key={r.id}
             style={{
               marginBottom: 12,
-              background: r.isStaff ? '#f7f6f2' : '#fff',
+              background: r.isStaff ? 'var(--bg-raised)' : 'var(--bg-panel)',
               marginLeft: r.isStaff ? 0 : 24,
               marginRight: r.isStaff ? 24 : 0,
             }}
           >
-            <div style={{ fontSize: 12, color: '#9a9992', marginBottom: 6 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
               {r.isStaff ? 'Équipe Campaign-ai' : 'Vous'} · {new Date(r.createdAt).toLocaleString('fr-FR')}
             </div>
             <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{r.message}</div>
@@ -78,7 +78,7 @@ export default function TicketDetailPage() {
         ))}
 
         {isClosed ? (
-          <p style={{ fontSize: 13, color: '#9a9992', textAlign: 'center', marginTop: 20 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', marginTop: 20 }}>
             Ce ticket est {ticket.status === 'RESOLVED' ? 'résolu' : 'fermé'}. Répondre le rouvrira.
           </p>
         ) : null}

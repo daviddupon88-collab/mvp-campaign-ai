@@ -39,9 +39,9 @@ export default function DashboardPage() {
 
         <Card>
           <h2 style={{ fontSize: 16, fontWeight: 500, marginTop: 0 }}>Campagnes récentes</h2>
-          {loading && <p style={{ color: '#5f5e5a', fontSize: 14 }}>Chargement...</p>}
+          {loading && <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Chargement...</p>}
           {!loading && campaigns.length === 0 && (
-            <p style={{ color: '#5f5e5a', fontSize: 14 }}>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
               Aucune campagne pour le moment. Créez-en une pour lancer l'orchestration IA.
             </p>
           )}
@@ -52,13 +52,13 @@ export default function DashboardPage() {
               style={{
                 display: 'block',
                 padding: '12px 0',
-                borderTop: '1px solid #eee',
+                borderTop: '1px solid var(--border)',
                 textDecoration: 'none',
-                color: '#1a1a18',
+                color: 'var(--text-primary)',
               }}
             >
               <strong style={{ fontSize: 14 }}>{c.name}</strong>
-              <span style={{ marginLeft: 12, fontSize: 12, color: '#5f5e5a' }}>{c.status}</span>
+              <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--text-secondary)' }}>{c.status}</span>
             </Link>
           ))}
         </Card>

@@ -4,8 +4,17 @@ export class CreateCampaignDto {
   @IsString()
   name: string;
 
-  @IsString()
-  productDescription: string;
+  // Optionnel désormais : une photo produit (productImageAssetId) peut suffire à elle seule
+  // ("une photo suffit", cf. page d'accueil) — CampaignsService.create() exige qu'au moins
+  // l'un des deux (description ou photo) soit fourni.
+  @IsOptional() @IsString()
+  productDescription?: string;
+
+  // Référence vers un Asset déjà téléversé via POST /assets/upload (jamais une URL externe
+  // arbitraire — CampaignsService résout et vérifie l'appartenance à l'organisation avant
+  // de transmettre l'URL réelle à l'analyse IA).
+  @IsOptional() @IsString()
+  productImageAssetId?: string;
 
   @IsString()
   objective: string;

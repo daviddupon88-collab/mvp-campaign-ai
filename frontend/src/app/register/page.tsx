@@ -36,7 +36,7 @@ export default function RegisterPage() {
   return (
     <main style={{ maxWidth: 400, margin: '80px auto', padding: '0 16px' }}>
       <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Créer votre compte Campaign-ai</h1>
-      <p style={{ fontSize: 13, color: '#5f5e5a', marginBottom: 24 }}>14 jours d'essai gratuit — aucune carte bancaire requise.</p>
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24 }}>14 jours d'essai gratuit — aucune carte bancaire requise.</p>
       <Card>
         <form onSubmit={handleSubmit}>
           <Field label="Nom complet" value={fullName} onChange={setFullName} required />
@@ -49,7 +49,7 @@ export default function RegisterPage() {
           </Button>
         </form>
       </Card>
-      <p style={{ marginTop: 16, fontSize: 14, color: '#5f5e5a' }}>
+      <p style={{ marginTop: 16, fontSize: 14, color: 'var(--text-secondary)' }}>
         Déjà un compte ? <Link href="/login">Se connecter</Link>
       </p>
     </main>

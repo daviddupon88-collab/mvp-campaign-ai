@@ -73,7 +73,7 @@ export default function OnboardingPage() {
   return (
     <main style={{ maxWidth: 560, margin: '48px auto', padding: '0 16px' }}>
       <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Bienvenue sur Campaign-ai</h1>
-      <p style={{ fontSize: 13.5, color: '#5f5e5a', marginBottom: 28 }}>
+      <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginBottom: 28 }}>
         Trois étapes pour tirer le meilleur parti de votre essai gratuit de 14 jours.
       </p>
 
@@ -82,7 +82,7 @@ export default function OnboardingPage() {
         <StepHeader done={brandDone} title="Décrivez le ton de votre marque" />
         {!brandDone && (
           <>
-            <p style={{ fontSize: 13, color: '#5f5e5a', marginTop: 0 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 0 }}>
               Utilisé pour garder chaque génération cohérente avec votre identité.
             </p>
             <Field label="Ton éditorial" value={tone} onChange={setTone} placeholder="Ex: Chaleureux et direct, orienté résultats" />
@@ -91,7 +91,7 @@ export default function OnboardingPage() {
             </Button>
           </>
         )}
-        {brandDone && <p style={{ fontSize: 13, color: '#4a9d7f', margin: 0 }}>✓ Brand Kit renseigné</p>}
+        {brandDone && <p style={{ fontSize: 13, color: 'var(--accent-done)', margin: 0 }}>✓ Brand Kit renseigné</p>}
       </Card>
 
       {/* Étape 2 — Inviter l'équipe (optionnel) */}
@@ -99,7 +99,7 @@ export default function OnboardingPage() {
         <StepHeader done={teamInvited} title="Invitez un collègue (optionnel)" />
         {!teamInvited && (
           <>
-            <p style={{ fontSize: 13, color: '#5f5e5a', marginTop: 0 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 0 }}>
               Un Marketing Manager devra approuver vos campagnes avant publication.
             </p>
             <Field label="Email du collègue" type="email" value={inviteEmail} onChange={setInviteEmail} placeholder="collegue@entreprise.com" />
@@ -111,7 +111,7 @@ export default function OnboardingPage() {
             </div>
           </>
         )}
-        {teamInvited && <p style={{ fontSize: 13, color: '#4a9d7f', margin: 0 }}>✓ Étape terminée</p>}
+        {teamInvited && <p style={{ fontSize: 13, color: 'var(--accent-done)', margin: 0 }}>✓ Étape terminée</p>}
       </Card>
 
       {/* Étape 3 — Première campagne */}
@@ -119,21 +119,21 @@ export default function OnboardingPage() {
         <StepHeader done={campaignDone} title="Créez votre première campagne" />
         {!campaignDone && (
           <>
-            <p style={{ fontSize: 13, color: '#5f5e5a', marginTop: 0, marginBottom: 16 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 0, marginBottom: 16 }}>
               Une photo produit suffit pour lancer l'orchestration IA complète.
             </p>
             <Button onClick={() => router.push('/campaigns/new')}>Créer une campagne</Button>
           </>
         )}
-        {campaignDone && <p style={{ fontSize: 13, color: '#4a9d7f', margin: 0 }}>✓ Première campagne créée</p>}
+        {campaignDone && <p style={{ fontSize: 13, color: 'var(--accent-done)', margin: 0 }}>✓ Première campagne créée</p>}
       </Card>
 
-      {error && <p style={{ color: '#a32d2d', fontSize: 13, marginBottom: 16 }}>{error}</p>}
+      {error && <p style={{ color: 'var(--accent-danger)', fontSize: 13, marginBottom: 16 }}>{error}</p>}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <button
           onClick={() => router.push('/dashboard')}
-          style={{ background: 'none', border: 'none', color: '#5f5e5a', fontSize: 13, cursor: 'pointer' }}
+          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer' }}
         >
           Passer et aller au tableau de bord
         </button>
@@ -149,7 +149,7 @@ function StepHeader({ done, title }: { done: boolean; title: string }) {
       <span
         style={{
           width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-          background: done ? '#4a9d7f' : '#eee', color: done ? '#fff' : '#9a9992',
+          background: done ? 'var(--accent-done)' : 'var(--border)', color: done ? 'var(--bg-page)' : 'var(--text-muted)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
         }}
       >

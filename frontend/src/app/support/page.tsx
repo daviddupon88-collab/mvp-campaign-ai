@@ -59,7 +59,7 @@ export default function SupportPage() {
         )}
 
         {tickets.length === 0 && !creating ? (
-          <Card><p style={{ fontSize: 13.5, color: '#5f5e5a', margin: 0 }}>Aucun ticket pour le moment.</p></Card>
+          <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Aucun ticket pour le moment.</p></Card>
         ) : (
           tickets.map((t) => (
             <Link key={t.id} href={`/support/${t.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>

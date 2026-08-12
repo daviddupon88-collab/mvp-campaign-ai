@@ -191,8 +191,11 @@ export function getRecommendedUpgrade(currentPlanKey: string): string | null {
 // pas le pool de crédits partagé. Cf. EntitlementsService.assertVideoQuotaAvailable().
 // ---------------------------------------------------------------------------
 export const CREDIT_COSTS: Record<string, Record<string, number>> = {
-  // Génération de contenu de campagne (Copywriting AI, Creative Studio, Video Studio)
-  campaign_generation: { generateText: 8, generateImage: 25, generateVideo: 150 },
+  // Génération de contenu de campagne (Copywriting AI, Creative Studio, Video Studio).
+  // analyzeImage : analyse produit par vision (photo téléversée) — remplace generateText
+  // pour l'étape d'analyse produit quand une photo est fournie, cf. AiOrchestratorService.
+  // analyzeProductImage(). Coût explicite plutôt que le repli silencieux à 5 (creditCostFor).
+  campaign_generation: { generateText: 8, generateImage: 25, generateVideo: 150, analyzeImage: 10 },
   // Garde-fous qualité/sécurité : coût réduit ou nul — ce ne sont pas des fonctionnalités
   // que le client "achète", mais des vérifications que Campaign-ai effectue pour son propre
   // compte avant de proposer un résultat. moderateText n'est jamais facturé au client

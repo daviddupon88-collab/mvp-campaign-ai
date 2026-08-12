@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PlansModule } from '../plans/plans.module';
+import { BrandModule } from '../brand/brand.module';
 import { AiGatewayService } from './ai-gateway/ai-gateway.service';
 import { MockProvider } from './ai-gateway/providers/mock.provider';
 import { OpenAiProvider } from './ai-gateway/providers/openai.provider';
@@ -14,7 +15,7 @@ import { AiOrchestratorService } from './ai-orchestrator/ai-orchestrator.service
 // AiOrchestratorService ET de ModerationService, et les faire cohabiter dans ce module
 // créerait une dépendance circulaire AiModule <-> ModerationModule.
 @Module({
-  imports: [PlansModule],
+  imports: [PlansModule, BrandModule],
   providers: [
     AiGatewayService,
     MockProvider,

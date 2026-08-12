@@ -63,7 +63,7 @@ export const api = {
 
   listCampaigns: () => request<any[]>('/campaigns'),
 
-  createCampaign: (data: { name: string; productDescription: string; objective: string; budget?: number; channels?: string[]; templateId?: string }) =>
+  createCampaign: (data: { name: string; productDescription?: string; productImageAssetId?: string; objective: string; budget?: number; channels?: string[]; templateId?: string }) =>
     request<any>('/campaigns', { method: 'POST', body: JSON.stringify(data) }),
 
   getCampaign: (id: string) => request<any>(`/campaigns/${id}`),
@@ -189,7 +189,21 @@ export const api = {
     logoUrl?: string;
   }) => request<any>('/brand-kit', { method: 'PUT', body: JSON.stringify(data) }),
 
-  getBrandMemory: (limit?: number) => request<any[]>(`/brand-kit/memory${limit ? `?limit=${limit}` : ''}`),
+  getBrandMemory: (params?: { limit?: number; type?: string; category?: string; channel?: string; persona?: string; status?: string }) => {
+    const qs = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v !== undefined) as [string, string][]).toString();
+    return request<any[]>(`/brand-kit/memory${qs ? `?${qs}` : ''}`);
+  },
+  getBrandBrief: () => request<any>('/brand-kit/brief'),
+  getBrandRules: () => request<any[]>('/brand-kit/memory/rules'),
+  getBrandContradictions: (status?: string) => request<any[]>(`/brand-kit/memory/contradictions${status ? `?status=${status}` : ''}`),
+  confirmBrandMemory: (id: string) => request<any>(`/brand-kit/memory/${id}/confirm`, { method: 'POST' }),
+  dismissBrandMemory: (id: string) => request<any>(`/brand-kit/memory/${id}/dismiss`, { method: 'POST' }),
+  promoteBrandMemoryToRule: (id: string, forbiddenTerms?: string[]) =>
+    request<any>(`/brand-kit/memory/${id}/promote-to-rule`, { method: 'POST', body: JSON.stringify({ forbiddenTerms }) }),
+  correctBrandMemory: (id: string, data: { content?: string; category?: string; channel?: string; persona?: string }) =>
+    request<any>(`/brand-kit/memory/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  resolveBrandContradiction: (id: string, resolution: 'RESOLVED_A' | 'RESOLVED_B' | 'CONTEXT_DEPENDENT') =>
+    request<any>(`/brand-kit/contradictions/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolution }) }),
 
   // --- Analytics ---
   getAnalyticsOverview: (limit?: number) => request<any[]>(`/analytics/overview${limit ? `?limit=${limit}` : ''}`),

@@ -50,21 +50,21 @@ export default function BillingSettingsPage() {
         {usage && (
           <Card style={{ marginBottom: 24, maxWidth: 480 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
-              <span style={{ color: '#5f5e5a' }}>Crédits IA utilisés ce mois</span>
+              <span style={{ color: 'var(--text-secondary)' }}>Crédits IA utilisés ce mois</span>
               <span className="mono">{credits?.used ?? 0} / {credits?.limit ?? 0}</span>
             </div>
-            <div style={{ height: 6, background: '#eee', borderRadius: 6, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${creditsPct}%`, background: creditsPct > 90 ? '#a3552d' : '#1a1a18', borderRadius: 6 }} />
+            <div style={{ height: 6, background: 'var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${creditsPct}%`, background: creditsPct > 90 ? 'var(--accent-danger)' : 'var(--accent-brand)', borderRadius: 6 }} />
             </div>
             {usage.subscription?.status === 'trialing' && usage.subscription?.trialEndsAt && (
-              <p style={{ fontSize: 12.5, color: '#5f5e5a', marginTop: 12, marginBottom: 0 }}>
+              <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 12, marginBottom: 0 }}>
                 Essai gratuit — se termine le {new Date(usage.subscription.trialEndsAt).toLocaleDateString('fr-FR')}
               </p>
             )}
           </Card>
         )}
 
-        {error && <p style={{ color: '#a32d2d', fontSize: 13, marginBottom: 16 }}>{error}</p>}
+        {error && <p style={{ color: 'var(--accent-danger)', fontSize: 13, marginBottom: 16 }}>{error}</p>}
 
         <h2 style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Changer de plan</h2>
         <PricingGrid plans={plans} currentPlanKey={currentPlanKey} onSelectPlan={handleSelectPlan} />

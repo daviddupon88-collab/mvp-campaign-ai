@@ -33,11 +33,11 @@ export function QuotaUsage() {
         return (
           <div key={key} style={{ marginBottom: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
-              <span style={{ color: '#5f5e5a' }}>{LABELS[key] ?? key}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>{LABELS[key] ?? key}</span>
               <span className="mono">{value.used} / {value.limit}</span>
             </div>
-            <div style={{ height: 6, background: '#eee', borderRadius: 6, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${pct}%`, background: pct > 90 ? '#a3552d' : '#1a1a18', borderRadius: 6 }} />
+            <div style={{ height: 6, background: 'var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${pct}%`, background: pct > 90 ? 'var(--accent-danger)' : 'var(--accent-brand)', borderRadius: 6 }} />
             </div>
           </div>
         );
@@ -46,9 +46,9 @@ export function QuotaUsage() {
         // Consommé en priorité sur le quota ci-dessus (cf. EntitlementsService.consumeCredits)
         // — jamais remis à zéro au renouvellement mensuel, donc affiché à part plutôt que
         // mélangé dans une barre de progression qui suggérerait à tort une limite mensuelle.
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginTop: 4, paddingTop: 10, borderTop: '1px solid #eee' }}>
-          <span style={{ color: '#5f5e5a' }}>Crédits de pack achetés (consommés en priorité)</span>
-          <span className="mono" style={{ color: '#4a9d7f' }}>{extraCredits}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginTop: 4, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <span style={{ color: 'var(--text-secondary)' }}>Crédits de pack achetés (consommés en priorité)</span>
+          <span className="mono" style={{ color: 'var(--accent-done)' }}>{extraCredits}</span>
         </div>
       )}
     </Card>

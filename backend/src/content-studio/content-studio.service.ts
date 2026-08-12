@@ -1,6 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { BrandLearningService } from '../brand/brand-learning.service';
+import { BrandRuleGuardService } from '../brand/brand-rule-guard.service';
 import { validateGoogleAdsBody } from './google-ads-body-guard';
+import { diffWords } from './edit-diff.util';
 
 export interface CreatePieceParams {
   organizationId: string;
@@ -32,7 +35,13 @@ export interface CreateVariationParams {
 // concurrentes (A/B) avant de choisir laquelle devient la version courante à publier.
 @Injectable()
 export class ContentStudioService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ContentStudioService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly brandLearning: BrandLearningService,
+    private readonly brandRuleGuard: BrandRuleGuardService,
+  ) {}
 
   async listForCampaign(organizationId: string, campaignId: string) {
     return this.prisma.contentPiece.findMany({
@@ -99,6 +108,19 @@ export class ContentStudioService {
       validateGoogleAdsBody(params.body);
     }
 
+    // Brand Brain (Phase 11) : une RULE active ne dépend jamais uniquement du prompt de
+    // génération — un terme explicitement interdit (metadata.forbiddenTerms) est bloqué ici
+    // par du code, y compris sur une édition manuelle qui n'est jamais passée par l'IA.
+    if (params.body) {
+      const violations = await this.brandRuleGuard.checkText(organizationId, params.body, { channel: piece.channel });
+      if (violations.length > 0) {
+        const [first] = violations;
+        throw new BadRequestException(
+          `Contenu refusé — règle de marque enfreinte : "${first.ruleContent}" (terme interdit détecté : "${first.matchedTerm}").`,
+        );
+      }
+    }
+
     const nextVersionNumber = Math.max(0, ...piece.versions.filter((v) => !v.label).map((v) => v.versionNumber)) + 1;
 
     const version = await this.prisma.contentVersion.create({
@@ -112,11 +134,72 @@ export class ContentStudioService {
       },
     });
 
-    return this.prisma.contentPiece.update({
+    const updated = await this.prisma.contentPiece.update({
       where: { id: piece.id },
       data: { currentVersionId: version.id },
       include: { currentVersion: { include: { asset: true } } },
     });
+
+    // Brand Brain (Phase 4) : capture la différence entre la version générée par l'IA et la
+    // version approuvée par l'humain — jamais l'inverse (édition d'une édition déjà humaine),
+    // ce qui n'apporte pas ce signal précis. Best-effort : un bug dans cette capture ne doit
+    // jamais faire échouer une édition de contenu réelle.
+    if (params.body) {
+      try {
+        await this.captureHumanEditObservations(organizationId, piece, params.body);
+      } catch (error) {
+        this.logger.warn(`Capture Brand Brain de l'édition (pièce ${pieceId}) échouée, édition non affectée : ${error}`);
+      }
+    }
+
+    return updated;
+  }
+
+  // Une seule voie d'entrée pour toute observation dérivée d'une édition manuelle — ne
+  // capture QUE le passage IA -> humain (previousVersion.createdByUserId absent), pas une
+  // édition humaine sur une édition humaine, qui n'a pas la même valeur de signal
+  // (cf. Phase 4 : "AI GENERATED VERSION et USER APPROVED VERSION").
+  private async captureHumanEditObservations(
+    organizationId: string,
+    piece: { id: string; channel: string; campaignId: string; currentVersion: { body: string | null; createdByUserId: string | null } | null },
+    newBody: string,
+  ) {
+    const previousVersion = piece.currentVersion;
+    if (!previousVersion?.body || previousVersion.createdByUserId || previousVersion.body === newBody) return;
+
+    const { removed, added } = diffWords(previousVersion.body, newBody);
+
+    for (const word of removed) {
+      await this.brandLearning.recordObservation({
+        organizationId,
+        type: 'LEARNING',
+        category: 'COPY',
+        scope: 'CHANNEL',
+        channel: piece.channel,
+        content: `Le mot « ${word} » généré par l'IA est régulièrement retiré lors des éditions manuelles sur ${piece.channel}.`,
+        dedupKey: `edit-removed:${piece.channel}:${word}`,
+        signal: 'positive', // confirme le pattern "ce mot tend à être retiré", pas la campagne
+        source: 'content_studio_edit',
+        sourceId: piece.id,
+        sourceCampaignId: piece.campaignId,
+      });
+    }
+
+    for (const word of added) {
+      await this.brandLearning.recordObservation({
+        organizationId,
+        type: 'LEARNING',
+        category: 'COPY',
+        scope: 'CHANNEL',
+        channel: piece.channel,
+        content: `Le mot « ${word} » est régulièrement ajouté par les utilisateurs lors des éditions manuelles sur ${piece.channel}.`,
+        dedupKey: `edit-added:${piece.channel}:${word}`,
+        signal: 'positive',
+        source: 'content_studio_edit',
+        sourceId: piece.id,
+        sourceCampaignId: piece.campaignId,
+      });
+    }
   }
 
   // Crée une ou plusieurs variations concurrentes à comparer côte à côte — typiquement

@@ -124,7 +124,8 @@ model Organization {
   assets            Asset[]
   contentPieces     ContentPiece[]
   calendarEntries   CalendarEntry[]
-  brandMemoryEntries BrandMemoryEntry[]
+  brandMemoryEntries        BrandMemoryEntry[]
+  brandMemoryContradictions BrandMemoryContradiction[]
 
   @@map("organizations")
 }
@@ -207,6 +208,15 @@ model Campaign {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
+  // Photo produit fournie à la création (Module 3 — Product Intelligence : "une photo
+  // suffit"). Dénormalisée depuis l'Asset référencé au moment de la création (même pattern
+  // que BrandKit.logoUrl) plutôt qu'une relation stricte — l'URL doit survivre même si
+  // l'asset source est supprimé de la bibliothèque plus tard. Quand renseignée,
+  // AiOrchestratorService l'utilise pour une analyse produit par vision plutôt que du texte
+  // seul ; productDescription reste possible en complément ou seul (les deux sont optionnels
+  // côté DTO, au moins l'un des deux est requis — cf. CampaignsService.create).
+  productImageUrl String?
+
   // Garde-fous avant publication : validation humaine obligatoire + verdict de modération.
   // Le passage à PUBLISHED ne peut jamais sauter l'étape APPROVED (cf. PublishingService).
   moderationVerdict ModerationStatus?
@@ -264,10 +274,24 @@ enum CalendarEntryStatus {
   CANCELED
 }
 
+// V1 (CAMPAIGN_LEARNING/COMPETITOR_NOTE/PERFORMANCE_INSIGHT) conservés tels quels — écrits
+// par PublishingService et AiOptimizerService, jamais retirés (cf. règle absolue "ne pas
+// casser l'existant"). Les nouveaux types épistémiques ci-dessous distinguent la FORCE d'une
+// connaissance (une RULE contraint la génération, un LEARNING est encore une hypothèse) —
+// cf. Phase 11 de la demande produit. Le câblage des nouveaux call-sites qui produisent ces
+// types se fait progressivement dans les lots suivants, jamais en migrant silencieusement les
+// entrées V1 existantes vers un type qu'elles n'ont pas réellement gagné.
 enum BrandMemoryType {
   CAMPAIGN_LEARNING
   COMPETITOR_NOTE
   PERFORMANCE_INSIGHT
+  FACT
+  PREFERENCE
+  RULE
+  LEARNING
+  INSIGHT
+  ANTI_PATTERN
+  CONTRADICTION
 }
 
 // Bibliothèque de médias — réutilisable à travers les campagnes, pas seulement lié à un
@@ -396,25 +420,154 @@ model CalendarEntry {
   @@map("calendar_entries")
 }
 
-// Brand Brain — mémoire qui s'enrichit dans le temps, contrairement à BrandKit (statique,
-// édité manuellement). Alimentée automatiquement à des points clés du cycle de vie d'une
-// campagne (publication, recommandation Optimizer notable), consommée par
-// BrandService.buildPromptContext() pour que chaque nouvelle génération bénéficie de ce qui
-// a été appris des campagnes précédentes — c'est ce qui transforme un simple formulaire de
-// charte graphique en mémoire de marque qui apprend.
+// Brand Brain V2 — Learning & Decision Intelligence (audit du 2026-08-12 : la V1 stockait un
+// simple texte horodaté, jamais réellement injecté dans les prompts malgré ce que prétendait
+// buildPromptContext() — cf. Lot D pour le câblage réel dans l'AI Orchestrator). Ce modèle
+// distingue maintenant CE QUE l'on sait (type — un FACT n'a pas la même force qu'une RULE),
+// DE QUOI ça parle (category), et OÙ ça s'applique (scope + channel/persona/contentType en
+// affinage optionnel du scope) — une même observation peut être vraie sur LinkedIn et fausse
+// sur TikTok, d'où la nécessité de ces axes plutôt qu'un simple champ `content` plat.
+//
+// Champs de confiance (confidenceScore, evidenceCount, positiveSignals, negativeSignals) :
+// calculés par BrandLearningService (Lot B), jamais par le service appelant — une observation
+// unique doit toujours démarrer en LEARNING à confiance faible, jamais en RULE à confiance
+// élevée (cf. Phase 3 de la demande produit). Les valeurs par défaut ci-dessous ne sont donc
+// que des repères neutres pour une ligne fraîchement créée avant tout calcul.
 model BrandMemoryEntry {
   id        String          @id @default(uuid())
   type      BrandMemoryType
   content   String
   createdAt DateTime        @default(now())
 
+  // Nullable : une entrée héritée de la V1 (CAMPAIGN_LEARNING/COMPETITOR_NOTE/PERFORMANCE_INSIGHT)
+  // n'a pas assez d'information pour être catégorisée sans l'inventer — cf. règle absolue #21
+  // (valeur neutre plutôt qu'inventée) appliquée dans la migration de backfill.
+  category BrandMemoryCategory?
+  scope    BrandMemoryScope    @default(GLOBAL)
+  status   BrandMemoryStatus   @default(ACTIVE)
+
+  // Moteur de confiance (Lot B) — une seule observation ne doit jamais produire une confiance
+  // élevée ; confidenceScore démarre bas et ne monte qu'avec des observations répétées,
+  // cohérentes et récentes (cf. BrandLearningService).
+  confidenceScore Float @default(0.3)
+  evidenceCount   Int   @default(1)
+  sampleSize      Int?
+  positiveSignals Int   @default(0)
+  negativeSignals Int   @default(0)
+
+  // Provenance générique (source + sourceId) — distincte de sourceCampaignId (conservé tel
+  // quel pour compat V1) car une observation peut désormais venir d'une édition Content
+  // Studio ou d'une recommandation Optimizer sans qu'une campagne précise soit le bon axe de
+  // référence (ex: sourceId = ContentPiece.id ou OptimizationRecommendation.id).
+  source   String?
+  sourceId String?
+
+  // Affinage optionnel du scope — un scope CHANNEL sans `channel` renseigné n'a pas de sens,
+  // mais rester en chaînes libres plutôt qu'un enum évite de dupliquer la liste des canaux
+  // déjà définie ailleurs (mapChannelSlugsToPlatforms côté plans) et qui évolue indépendamment.
+  channel     String?
+  persona     String?
+  contentType String?
+
+  firstObservedAt DateTime  @default(now())
+  lastObservedAt  DateTime  @default(now())
+  expiresAt       DateTime? // jamais calculé automatiquement (cf. Phase 8 — poids de pertinence, pas de suppression) ; réservé à un forçage manuel futur
+
+  metadata Json?
+
+  // Clé de regroupement explicite (Lot B — BrandLearningService.recordObservation) : deux
+  // observations partageant la même organisation + dedupKey renforcent la MÊME entrée
+  // (evidenceCount++) plutôt que d'en créer une nouvelle à chaque occurrence — c'est ce qui
+  // matérialise la "répétition du signal" (Phase 3) sans comparaison sémantique coûteuse.
+  // Colonne dédiée (indexée) plutôt qu'un champ dans `metadata` : une correspondance exacte
+  // cherchée à chaque édition mérite un vrai index, pas un scan JSON.
+  dedupKey String?
+
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   sourceCampaignId String?
 
+  contradictionsAsA BrandMemoryContradiction[] @relation("ContradictionA")
+  contradictionsAsB BrandMemoryContradiction[] @relation("ContradictionB")
+
   @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, scope, channel])
+  @@index([organizationId, category])
+  @@index([organizationId, dedupKey])
   @@map("brand_memory_entries")
+}
+
+enum BrandMemoryCategory {
+  POSITIONING
+  VOICE
+  COPY
+  CREATIVE
+  CHANNEL
+  PERSONA
+  OFFER
+  CTA
+  VISUAL
+  PERFORMANCE
+  COMPETITOR
+  LEGAL
+  PRODUCT
+}
+
+enum BrandMemoryScope {
+  GLOBAL
+  CHANNEL
+  PERSONA
+  CONTENT_TYPE
+  CAMPAIGN
+}
+
+enum BrandMemoryStatus {
+  ACTIVE
+  OUTDATED
+  CONTRADICTED
+  DISMISSED
+}
+
+// Phase 9 (Lot C) — une contradiction est une relation ENTRE deux connaissances, pas une
+// propriété d'une seule ligne : modèle séparé plutôt qu'un champ auto-référentiel sur
+// BrandMemoryEntry, pour porter proprement les deux côtés (evidence/confidence figés au
+// moment de la détection, indépendants de l'évolution ultérieure des deux entrées). Détection
+// heuristique par mots-clés opposés (cf. ContradictionService), pas de compréhension
+// sémantique réelle — limitation connue, cf. rapport d'audit V2 / recommandations V3.
+model BrandMemoryContradiction {
+  id     String @id @default(uuid())
+  detectedAt DateTime @default(now())
+
+  knowledgeAId String
+  knowledgeA   BrandMemoryEntry @relation("ContradictionA", fields: [knowledgeAId], references: [id], onDelete: Cascade)
+  knowledgeBId String
+  knowledgeB   BrandMemoryEntry @relation("ContradictionB", fields: [knowledgeBId], references: [id], onDelete: Cascade)
+
+  // Instantané au moment de la détection — une contradiction déjà enregistrée ne doit pas
+  // silencieusement changer de sens si l'une des deux entrées est renforcée après coup.
+  evidenceA   Int
+  evidenceB   Int
+  confidenceA Float
+  confidenceB Float
+
+  resolutionStatus ContradictionResolutionStatus @default(UNRESOLVED)
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, resolutionStatus])
+  @@map("brand_memory_contradictions")
+}
+
+enum ContradictionResolutionStatus {
+  UNRESOLVED
+  RESOLVED_A
+  RESOLVED_B
+  CONTEXT_DEPENDENT
 }
 
 // Traçabilité IA — cf. chapitre 10.14 du business plan

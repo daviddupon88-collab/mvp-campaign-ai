@@ -4,7 +4,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiGatewayService } from '../ai/ai-gateway/ai-gateway.service';
 import { AnalyticsIngestionService } from './analytics-ingestion.service';
-import { BrandService } from '../brand/brand.service';
+import { BrandLearningService } from '../brand/brand-learning.service';
 import { EntitlementsService } from '../plans/entitlements.service';
 
 // Module 16 — AI Optimizer : "Chaque nuit, Campaign-ai analysera toutes les campagnes puis
@@ -24,7 +24,7 @@ export class AiOptimizerService {
     private readonly prisma: PrismaService,
     private readonly aiGateway: AiGatewayService,
     private readonly analyticsIngestion: AnalyticsIngestionService,
-    private readonly brandService: BrandService,
+    private readonly brandLearning: BrandLearningService,
     private readonly entitlements: EntitlementsService,
     private readonly config: ConfigService,
   ) {}
@@ -103,7 +103,7 @@ export class AiOptimizerService {
     const actions = (recommendation.details as { actions?: Array<{ type: string }> })?.actions ?? [];
     const automationEligible = actions.length > 0 && actions.every((a) => SAFE_ACTION_TYPES.includes(a.type));
 
-    await this.prisma.optimizationRecommendation.create({
+    const created = await this.prisma.optimizationRecommendation.create({
       data: {
         organizationId,
         campaignId,
@@ -115,17 +115,34 @@ export class AiOptimizerService {
     });
     this.logger.log(`Nouvelle recommandation générée pour la campagne ${campaignId}`);
 
-    // Brand Brain : seules les performances notables (au-dessus ou en-dessous de l'objectif)
-    // méritent de nourrir la mémoire de marque — un simple "on_track" répété chaque nuit
-    // n'apporterait aucun signal utile aux futures générations, seulement du bruit.
+    // Brand Brain (Phase 15) : seules les performances notables (au-dessus ou en-dessous de
+    // l'objectif) méritent de nourrir la mémoire de marque — un "on_track" répété chaque nuit
+    // n'apporterait aucun signal utile, seulement du bruit. Route désormais par
+    // BrandLearningService plutôt que l'ancien logMemory : UNE recommandation ne devient
+    // jamais une vérité en soi (Phase 15 : "une recommandation non vérifiée ne doit pas
+    // devenir automatiquement une vérité") — c'est la RÉPÉTITION du même type de constat qui
+    // construit la confiance, jamais une occurrence isolée. La vérification par mesure
+    // avant/après d'une recommandation réellement appliquée (OptimizationRecommendation.status
+    // = APPLIED) reste hors de portée de ce lot — cf. limitations connues du rapport d'audit.
     const performance = (recommendation.details as { performance?: string })?.performance;
     if (performance === 'under' || performance === 'over') {
-      await this.brandService.logMemory(
-        organizationId,
-        'PERFORMANCE_INSIGHT',
-        `Campagne "${campaign.name}" (objectif: ${campaign.objective ?? 'non précisé'}) — performance ${performance === 'under' ? 'en-dessous' : 'au-dessus'} de l'attendu : ${recommendation.summary}`,
-        campaignId,
-      );
+      const primaryActionType = actions[0]?.type ?? 'general';
+      try {
+        await this.brandLearning.recordObservation({
+          organizationId,
+          type: 'INSIGHT',
+          category: 'PERFORMANCE',
+          scope: 'CAMPAIGN',
+          content: `Campagne "${campaign.name}" (objectif: ${campaign.objective ?? 'non précisé'}) — performance ${performance === 'under' ? 'en-dessous' : 'au-dessus'} de l'attendu : ${recommendation.summary}`,
+          dedupKey: `optimizer:${organizationId}:${performance}:${primaryActionType}`,
+          signal: performance === 'under' ? 'negative' : 'positive',
+          source: 'optimizer',
+          sourceId: created.id,
+          sourceCampaignId: campaignId,
+        });
+      } catch (error) {
+        this.logger.warn(`Enregistrement Brand Brain de l'insight de performance échoué pour la campagne ${campaignId}, recommandation conservée : ${error}`);
+      }
     }
   }
 

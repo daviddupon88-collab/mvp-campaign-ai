@@ -25,9 +25,9 @@ export function TrialBanner() {
       style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '10px 16px', borderRadius: 8, marginBottom: 20, fontSize: 13,
-        background: urgent ? '#fdf1ee' : '#f0f7f4',
-        border: `1px solid ${urgent ? '#e8c4b8' : '#c8e0d4'}`,
-        color: urgent ? '#a3552d' : '#2d6b4f',
+        background: urgent ? 'var(--accent-danger-dim)' : 'var(--accent-done-dim)',
+        border: `1px solid ${urgent ? 'var(--accent-danger)' : 'var(--accent-done)'}`,
+        color: urgent ? 'var(--accent-danger)' : 'var(--accent-done)',
       }}
     >
       <span>

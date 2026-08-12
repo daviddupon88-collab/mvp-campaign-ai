@@ -55,6 +55,14 @@ export class CampaignsService {
   // sont complétés par les valeurs par défaut du template, et l'Orchestrator reçoit ses
   // indications (ton, angle d'analyse, archétype de persona) pour guider la génération.
   async create(organizationId: string, dto: CreateCampaignDto) {
+    // "Une photo suffit" (page d'accueil) : la description texte devient optionnelle dès
+    // lors qu'une photo est fournie — mais il faut au moins l'un des deux, sans quoi
+    // l'Orchestrator n'a rigoureusement rien à analyser.
+    if (!dto.productDescription?.trim() && !dto.productImageAssetId) {
+      throw new BadRequestException('Une description du produit ou une photo est requise pour générer une campagne.');
+    }
+    const productImageUrl = await this.resolveProductImageUrl(organizationId, dto.productImageAssetId);
+
     // Garde-fou SaaS : aucune création de campagne ne doit contourner le plan souscrit.
     // Ordre volontaire : d'abord l'abonnement (le plus bloquant), puis les quotas fins —
     // pas la peine de calculer le reste si l'organisation n'a même pas d'accès actif.
@@ -103,6 +111,7 @@ export class CampaignsService {
         budget: dto.budget,
         channels,
         templateId: dto.templateId,
+        productImageUrl,
         status: 'IN_PROGRESS',
       },
     });
@@ -113,12 +122,25 @@ export class CampaignsService {
       organizationId,
       campaignId: campaign.id,
       productDescription: dto.productDescription,
+      productImageUrl,
       objective,
       channels,
       templateHints,
     });
 
     return campaign;
+  }
+
+  // Résout un assetId (fourni par le frontend après un vrai upload via POST /assets/upload)
+  // en URL réelle, en vérifiant au passage qu'il appartient bien à l'organisation appelante
+  // et qu'il s'agit d'une image — jamais une URL externe arbitraire acceptée telle quelle
+  // (contrairement à un simple champ texte, ceci force à passer par notre pipeline de
+  // stockage contrôlé avant qu'une image ne soit soumise à l'analyse IA).
+  private async resolveProductImageUrl(organizationId: string, assetId: string | undefined): Promise<string | undefined> {
+    if (!assetId) return undefined;
+    const asset = await this.prisma.asset.findFirst({ where: { id: assetId, organizationId, type: 'IMAGE' } });
+    if (!asset) throw new NotFoundException('Photo produit introuvable');
+    return asset.url;
   }
 
   // Validation humaine obligatoire (garde-fou n°1) : seul un rôle MARKETING_MANAGER
@@ -189,6 +211,12 @@ export class CampaignsService {
       }
     }
 
+    // Une nouvelle photo remplace l'ancienne si fournie ; sinon la photo déjà enregistrée
+    // sur la campagne (le cas échéant) est réutilisée telle quelle pour la régénération.
+    const productImageUrl = dto.productImageAssetId
+      ? await this.resolveProductImageUrl(organizationId, dto.productImageAssetId)
+      : campaign.productImageUrl ?? undefined;
+
     await this.prisma.campaign.update({
       where: { id: campaignId },
       data: {
@@ -196,13 +224,15 @@ export class CampaignsService {
         moderationVerdict: null,
         rejectionReason: null,
         channels: dto.channels ?? campaign.channels ?? undefined,
+        productImageUrl,
       },
     });
 
     await this.generationQueue.add('generate', {
       organizationId,
       campaignId,
-      productDescription: dto.productDescription,
+      productDescription: dto.productDescription ?? undefined,
+      productImageUrl,
       objective: dto.objective ?? campaign.objective,
       channels: dto.channels ?? (campaign.channels as string[] | null) ?? [],
     });

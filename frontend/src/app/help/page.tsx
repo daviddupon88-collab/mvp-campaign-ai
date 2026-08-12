@@ -27,7 +27,7 @@ export default function HelpPage() {
       <>
         <Nav />
         <main style={{ maxWidth: 680, margin: '40px auto', padding: '0 16px' }}>
-          <button onClick={() => setSelected(null)} style={{ fontSize: 12.5, background: 'none', border: 'none', color: '#5f5e5a', cursor: 'pointer', marginBottom: 16, padding: 0 }}>
+          <button onClick={() => setSelected(null)} style={{ fontSize: 12.5, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', marginBottom: 16, padding: 0 }}>
             ← Retour au centre d'aide
           </button>
           <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 16 }}>{selected.title}</h1>
@@ -46,16 +46,16 @@ export default function HelpPage() {
           placeholder="Rechercher..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d8d6cf', fontSize: 14, marginBottom: 20, boxSizing: 'border-box' }}
+          style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-strong)', fontSize: 14, marginBottom: 20, boxSizing: 'border-box' }}
         />
         {articles.length === 0 ? (
-          <p style={{ fontSize: 13.5, color: '#5f5e5a' }}>Aucun article ne correspond à votre recherche.</p>
+          <p style={{ fontSize: 13.5, color: 'var(--text-secondary)' }}>Aucun article ne correspond à votre recherche.</p>
         ) : (
           articles.map((a) => (
             <Card key={a.id} style={{ marginBottom: 10, cursor: 'pointer' }}>
               <div onClick={() => api.getHelpArticle(a.slug).then(setSelected)}>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{a.title}</div>
-                {a.category && <div style={{ fontSize: 12, color: '#9a9992', marginTop: 4 }}>{a.category}</div>}
+                {a.category && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{a.category}</div>}
               </div>
             </Card>
           ))

@@ -39,6 +39,16 @@ export default function NewCampaignPage() {
   const [loading, setLoading] = useState(false);
   const [limitError, setLimitError] = useState<ApiError | null>(null);
 
+  // "Une photo suffit" (page d'accueil) — l'upload se fait dès la sélection du fichier, pas
+  // à la soumission du formulaire : l'utilisateur voit l'aperçu et sait immédiatement si
+  // l'upload a échoué, avant d'avoir rempli le reste du formulaire. photoPreviewUrl est une
+  // URL locale (object URL du fichier), distincte de photoAsset.url (l'URL réelle une fois
+  // hébergée) — utilisée pour l'aperçu pendant l'upload, avant que ce dernier ne réponde.
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoAsset, setPhotoAsset] = useState<{ id: string; url: string } | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!ready) return;
     api.listTemplates().then(setTemplates).catch(() => setTemplates([]));
@@ -60,16 +70,48 @@ export default function NewCampaignPage() {
     setSelectedChannels((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
   }
 
+  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoError(null);
+    setPhotoPreviewUrl(URL.createObjectURL(file));
+    setUploadingPhoto(true);
+    try {
+      const asset = await api.uploadAsset(file);
+      setPhotoAsset({ id: asset.id, url: asset.url });
+    } catch (err: any) {
+      setPhotoError(err.message ?? "Échec de l'envoi de la photo");
+      setPhotoPreviewUrl(null);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  function removePhoto() {
+    setPhotoPreviewUrl(null);
+    setPhotoAsset(null);
+    setPhotoError(null);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    // Miroir du contrôle serveur (CampaignsService.create) : au moins l'un des deux est
+    // requis, jamais aucun — mais la vérification échoue vite ici, avant tout appel réseau.
+    if (!productDescription.trim() && !photoAsset) {
+      setError('Ajoutez une photo du produit ou décrivez-le — au moins l\'un des deux est nécessaire.');
+      return;
+    }
+
     setLoading(true);
     try {
       // La création empile immédiatement un job d'orchestration IA côté backend
       // (queue BullMQ) — l'utilisateur est redirigé sans attendre la génération.
       const campaign = await api.createCampaign({
         name,
-        productDescription,
+        productDescription: productDescription.trim() || undefined,
+        productImageAssetId: photoAsset?.id,
         objective,
         budget: budget ? Number(budget) : undefined,
         templateId: templateId ?? undefined,
@@ -98,7 +140,7 @@ export default function NewCampaignPage() {
 
         {!templateChosen ? (
           <>
-            <p style={{ fontSize: 13.5, color: '#5f5e5a', marginTop: 0, marginBottom: 16 }}>
+            <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginTop: 0, marginBottom: 16 }}>
               Un template guide la génération (objectif, ton, angle) sans rien figer — vous
               pourrez tout ajuster à l'étape suivante.
             </p>
@@ -107,15 +149,15 @@ export default function NewCampaignPage() {
                 <Card key={t.id} style={{ padding: 16, cursor: 'pointer' }}>
                   <div onClick={() => chooseTemplate(t)}>
                     <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4 }}>{t.name}</div>
-                    <div style={{ fontSize: 12, color: '#9a9992', marginBottom: 6 }}>{t.sector}</div>
-                    {t.description && <div style={{ fontSize: 12.5, color: '#5f5e5a' }}>{t.description}</div>}
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t.sector}</div>
+                    {t.description && <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{t.description}</div>}
                   </div>
                 </Card>
               ))}
             </div>
             <button
               onClick={() => chooseTemplate(null)}
-              style={{ fontSize: 13, background: 'none', border: 'none', color: '#5f5e5a', textDecoration: 'underline', cursor: 'pointer' }}
+              style={{ fontSize: 13, background: 'none', border: 'none', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer' }}
             >
               Partir d'une page blanche, sans template
             </button>
@@ -125,17 +167,47 @@ export default function NewCampaignPage() {
             <button
               type="button"
               onClick={() => setTemplateChosen(false)}
-              style={{ fontSize: 12.5, background: 'none', border: 'none', color: '#5f5e5a', cursor: 'pointer', marginBottom: 12, padding: 0 }}
+              style={{ fontSize: 12.5, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', marginBottom: 12, padding: 0 }}
             >
               ← Changer de template
             </button>
             <form onSubmit={handleSubmit}>
               <Field label="Nom de la campagne" value={name} onChange={setName} required />
+
+              <label style={{ display: 'block', marginBottom: 16 }}>
+                <span style={{ display: 'block', fontSize: 13, marginBottom: 8, color: 'var(--text-secondary)' }}>
+                  Photo du produit — une photo suffit : l'IA détecte catégorie, prix, forces et USP automatiquement
+                </span>
+                {photoPreviewUrl ? (
+                  <div style={{ border: '1px solid var(--border-strong)', borderRadius: 8, overflow: 'hidden' }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element -- aperçu local avant upload, pas un asset optimisable par next/image */}
+                    <img src={photoPreviewUrl} alt="Aperçu de la photo produit" style={{ width: '100%', maxHeight: 220, objectFit: 'cover', display: 'block' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-raised)', fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                      <span>{uploadingPhoto ? 'Envoi en cours...' : photoAsset ? 'Photo envoyée' : ''}</span>
+                      <button type="button" onClick={removePhoto} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer', textDecoration: 'underline' }}>
+                        Retirer
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ position: 'relative', border: '1.5px dashed var(--border-strong)', borderRadius: 8, padding: 28, textAlign: 'center', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4 }}>Glissez une photo ou cliquez pour téléverser</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>JPG, PNG — optionnel si une description est fournie ci-dessous</div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoChange}
+                      style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+                    />
+                  </div>
+                )}
+                <ErrorText message={photoError} />
+              </label>
+
               <Field
-                label="Description du produit"
+                label="Description du produit (optionnelle si une photo est fournie)"
                 value={productDescription}
                 onChange={setProductDescription}
-                required
                 placeholder="Ex: application mobile de fitness avec coaching IA personnalisé"
               />
               <Field
@@ -153,7 +225,7 @@ export default function NewCampaignPage() {
                   du navigateur) — cassant à la fois les lecteurs d'écran et tout sélecteur par
                   rôle/nom (ex: tests). */}
               <div style={{ marginBottom: 16 }} role="group" aria-label="Canaux">
-                <span style={{ display: 'block', fontSize: 13, marginBottom: 8, color: '#5f5e5a' }}>
+                <span style={{ display: 'block', fontSize: 13, marginBottom: 8, color: 'var(--text-secondary)' }}>
                   Canaux — chacun reçoit un contenu généré spécifiquement pour lui, pas un texte partagé
                 </span>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -167,9 +239,9 @@ export default function NewCampaignPage() {
                         style={{
                           padding: '7px 14px',
                           borderRadius: 20,
-                          border: `1px solid ${active ? '#1a1a18' : '#d8d6cf'}`,
-                          background: active ? '#1a1a18' : '#fff',
-                          color: active ? '#fff' : '#1a1a18',
+                          border: `1px solid ${active ? 'var(--accent-brand)' : 'var(--border-strong)'}`,
+                          background: active ? 'var(--accent-brand)' : 'transparent',
+                          color: active ? 'var(--bg-page)' : 'var(--text-primary)',
                           fontSize: 13,
                           cursor: 'pointer',
                         }}
@@ -180,15 +252,15 @@ export default function NewCampaignPage() {
                   })}
                 </div>
                 {selectedChannels.length === 0 && (
-                  <p style={{ fontSize: 11.5, color: '#9a9992', marginTop: 8, marginBottom: 0 }}>
+                  <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, marginBottom: 0 }}>
                     Aucun canal sélectionné : un contenu générique unique sera généré.
                   </p>
                 )}
               </div>
 
               <ErrorText message={error} />
-              <Button type="submit" disabled={loading}>
-                {loading ? 'Lancement...' : 'Générer la campagne'}
+              <Button type="submit" disabled={loading || uploadingPhoto}>
+                {loading ? 'Lancement...' : uploadingPhoto ? 'Envoi de la photo...' : 'Générer la campagne'}
               </Button>
             </form>
           </Card>

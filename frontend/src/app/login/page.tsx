@@ -41,7 +41,7 @@ export default function LoginPage() {
           </Button>
         </form>
       </Card>
-      <p style={{ marginTop: 16, fontSize: 14, color: '#5f5e5a' }}>
+      <p style={{ marginTop: 16, fontSize: 14, color: 'var(--text-secondary)' }}>
         Pas encore de compte ? <Link href="/register">Créer un compte</Link>
       </p>
     </main>

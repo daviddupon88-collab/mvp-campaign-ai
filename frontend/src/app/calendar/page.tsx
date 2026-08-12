@@ -54,17 +54,17 @@ export default function CalendarPage() {
         <ErrorText message={error} />
 
         {entries.length === 0 ? (
-          <Card><p style={{ fontSize: 13.5, color: '#5f5e5a', margin: 0 }}>Aucune publication planifiée ce mois-ci. La planification se fait depuis l'onglet "Contenu" d'une campagne.</p></Card>
+          <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Aucune publication planifiée ce mois-ci. La planification se fait depuis l'onglet "Contenu" d'une campagne.</p></Card>
         ) : (
           entries.map((e) => (
             <Card key={e.id} style={{ marginBottom: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <div style={{ fontSize: 13.5, fontWeight: 600 }}>{e.campaign?.name}</div>
-                  <div style={{ fontSize: 12, color: '#9a9992', marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                     {e.socialConnection?.platform} — {e.socialConnection?.externalAccountName}
                   </div>
-                  <div style={{ fontSize: 12, color: '#5f5e5a', marginTop: 4 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
                     {new Date(e.scheduledAt).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}
                   </div>
                 </div>
@@ -72,8 +72,8 @@ export default function CalendarPage() {
               </div>
               {e.status === 'SCHEDULED' && (
                 <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-                  <button onClick={() => reschedule(e.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: '#5f5e5a', cursor: 'pointer' }}>Replanifier</button>
-                  <button onClick={() => cancel(e.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: '#a3352d', cursor: 'pointer' }}>Annuler</button>
+                  <button onClick={() => reschedule(e.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>Replanifier</button>
+                  <button onClick={() => cancel(e.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer' }}>Annuler</button>
                 </div>
               )}
             </Card>

@@ -22,7 +22,7 @@ export default function AdminPage() {
       <>
         <Nav />
         <main style={{ maxWidth: 500, margin: '80px auto', textAlign: 'center', padding: '0 16px' }}>
-          <p style={{ fontSize: 14, color: '#5f5e5a' }}>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
             Cette section est réservée à l'équipe Campaign-ai. Si vous pensez devoir y avoir
             accès, contactez un administrateur plateforme.
           </p>
@@ -74,23 +74,23 @@ function OrganizationsTab() {
         placeholder="Rechercher une organisation..."
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d8d6cf', fontSize: 14, marginBottom: 16, boxSizing: 'border-box' }}
+        style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-strong)', fontSize: 14, marginBottom: 16, boxSizing: 'border-box' }}
       />
       {data?.organizations.map((org) => (
         <Card key={org.id} style={{ marginBottom: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ fontSize: 13.5, fontWeight: 600 }}>{org.name}</div>
-              <div style={{ fontSize: 12, color: '#9a9992', marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                 {org.plan} · {org.memberCount} membre{org.memberCount > 1 ? 's' : ''} · {org.campaignCount} campagne{org.campaignCount > 1 ? 's' : ''} · {org.aiCreditsUsed}/{org.aiCreditsIncluded} crédits{org.extraCredits > 0 ? ` (+${org.extraCredits} pack)` : ''}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               {org.subscriptionStatus && <StatusPill status={org.subscriptionStatus} />}
               {org.subscriptionStatus === 'suspended' ? (
-                <button onClick={() => reactivate(org.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: '#4a9d7f', cursor: 'pointer' }}>Réactiver</button>
+                <button onClick={() => reactivate(org.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-done)', cursor: 'pointer' }}>Réactiver</button>
               ) : (
-                <button onClick={() => suspend(org.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: '#a3352d', cursor: 'pointer' }}>Suspendre</button>
+                <button onClick={() => suspend(org.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer' }}>Suspendre</button>
               )}
             </div>
           </div>
@@ -108,7 +108,7 @@ function SubscriptionsTab() {
   return (
     <>
       <Card style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: '#5f5e5a' }}>MRR estimé</div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>MRR estimé</div>
         <div style={{ fontSize: 28, fontWeight: 600 }}>{data.estimatedMrrUsd.toLocaleString('fr-FR')} €</div>
       </Card>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -141,7 +141,7 @@ function AiCostsTab() {
   return (
     <>
       <Card style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: '#5f5e5a' }}>Coût IA ce mois-ci ({data.totalCalls} appels)</div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Coût IA ce mois-ci ({data.totalCalls} appels)</div>
         <div style={{ fontSize: 28, fontWeight: 600 }}>{data.totalCostUsd.toFixed(2)} $</div>
       </Card>
       <Card style={{ marginBottom: 16 }}>
@@ -173,24 +173,24 @@ function ErrorsTab() {
     <>
       <Card style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 13.5, marginTop: 0 }}>Erreurs serveur HTTP (5xx)</h3>
-        {data.httpErrors.length === 0 ? <p style={{ fontSize: 13, color: '#9a9992' }}>Aucune.</p> : data.httpErrors.map((e: any) => (
-          <div key={e.id} style={{ padding: '8px 0', borderTop: '1px solid #eee', fontSize: 12.5 }}>
+        {data.httpErrors.length === 0 ? <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucune.</p> : data.httpErrors.map((e: any) => (
+          <div key={e.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 12.5 }}>
             <strong>{e.statusCode}</strong> {e.method} {e.path} — {e.message}
           </div>
         ))}
       </Card>
       <Card style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 13.5, marginTop: 0 }}>Générations IA échouées</h3>
-        {data.failedAiGenerations.length === 0 ? <p style={{ fontSize: 13, color: '#9a9992' }}>Aucune.</p> : data.failedAiGenerations.map((g: any) => (
-          <div key={g.id} style={{ padding: '8px 0', borderTop: '1px solid #eee', fontSize: 12.5 }}>
+        {data.failedAiGenerations.length === 0 ? <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucune.</p> : data.failedAiGenerations.map((g: any) => (
+          <div key={g.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 12.5 }}>
             <strong>{g.taskType}</strong> · {g.provider} — {g.errorMessage}
           </div>
         ))}
       </Card>
       <Card>
         <h3 style={{ fontSize: 13.5, marginTop: 0 }}>Publications échouées</h3>
-        {data.failedPublications.length === 0 ? <p style={{ fontSize: 13, color: '#9a9992' }}>Aucune.</p> : data.failedPublications.map((p: any) => (
-          <div key={p.id} style={{ padding: '8px 0', borderTop: '1px solid #eee', fontSize: 12.5 }}>
+        {data.failedPublications.length === 0 ? <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucune.</p> : data.failedPublications.map((p: any) => (
+          <div key={p.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 12.5 }}>
             <strong>{p.platform}</strong> · {p.attemptCount} tentative(s) — {p.errorMessage}
           </div>
         ))}
@@ -205,10 +205,10 @@ function ActivityTab() {
 
   return (
     <Card>
-      {entries.length === 0 ? <p style={{ fontSize: 13, color: '#9a9992' }}>Aucune activité récente.</p> : entries.map((e) => (
-        <div key={e.id} style={{ padding: '8px 0', borderTop: '1px solid #eee', fontSize: 12.5, display: 'flex', justifyContent: 'space-between' }}>
+      {entries.length === 0 ? <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucune activité récente.</p> : entries.map((e) => (
+        <div key={e.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 12.5, display: 'flex', justifyContent: 'space-between' }}>
           <span><strong>{e.action}</strong> {e.actorEmail ? `par ${e.actorEmail}` : ''}</span>
-          <span style={{ color: '#9a9992' }}>{new Date(e.createdAt).toLocaleString('fr-FR')}</span>
+          <span style={{ color: 'var(--text-muted)' }}>{new Date(e.createdAt).toLocaleString('fr-FR')}</span>
         </div>
       ))}
     </Card>

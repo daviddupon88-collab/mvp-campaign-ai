@@ -83,23 +83,23 @@ export default function TeamSettingsPage() {
         <Card style={{ marginBottom: 16 }}>
           <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Membres</h2>
           {members.map((m) => (
-            <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid #eee' }}>
+            <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
               <div>
                 <div style={{ fontSize: 13.5 }}>{m.user.fullName || m.user.email}</div>
-                <div style={{ fontSize: 12, color: '#9a9992' }}>{m.user.email}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{m.user.email}</div>
               </div>
               {canManage && m.role !== 'OWNER' ? (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <select
                     value={m.role}
                     onChange={(e) => changeRole(m.id, e.target.value)}
-                    style={{ fontSize: 12.5, padding: '5px 8px', borderRadius: 6, border: '1px solid #d8d6cf' }}
+                    style={{ fontSize: 12.5, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border-strong)' }}
                   >
                     {INVITABLE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <button
                     onClick={() => remove(m.id)}
-                    style={{ fontSize: 12, background: 'none', border: 'none', color: '#a3352d', cursor: 'pointer' }}
+                    style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer' }}
                   >
                     Retirer
                   </button>
@@ -115,15 +115,15 @@ export default function TeamSettingsPage() {
           <Card style={{ marginBottom: 16 }}>
             <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Invitations en attente</h2>
             {invitations.map((inv) => (
-              <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid #eee' }}>
+              <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
                 <div>
                   <div style={{ fontSize: 13.5 }}>{inv.email}</div>
-                  <div style={{ fontSize: 12, color: '#9a9992' }}>{inv.role}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{inv.role}</div>
                 </div>
                 {canManage && (
                   <div style={{ display: 'flex', gap: 12 }}>
-                    <button onClick={() => resend(inv.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: '#5f5e5a', cursor: 'pointer' }}>Renvoyer</button>
-                    <button onClick={() => revoke(inv.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: '#a3352d', cursor: 'pointer' }}>Annuler</button>
+                    <button onClick={() => resend(inv.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>Renvoyer</button>
+                    <button onClick={() => revoke(inv.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer' }}>Annuler</button>
                   </div>
                 )}
               </div>
@@ -137,11 +137,11 @@ export default function TeamSettingsPage() {
             <form onSubmit={invite}>
               <Field label="Email" type="email" value={email} onChange={setEmail} required placeholder="collegue@entreprise.com" />
               <label style={{ display: 'block', marginBottom: 16 }}>
-                <span style={{ display: 'block', fontSize: 13, marginBottom: 6, color: '#5f5e5a' }}>Rôle</span>
+                <span style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>Rôle</span>
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d8d6cf', fontSize: 14 }}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-strong)', fontSize: 14 }}
                 >
                   {INVITABLE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>

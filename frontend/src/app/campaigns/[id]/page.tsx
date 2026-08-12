@@ -71,17 +71,27 @@ export default function CampaignDetailPage() {
     <>
       <Nav />
       <main style={{ maxWidth: 820, margin: '40px auto', padding: '0 16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 500, margin: 0 }}>{campaign.name}</h1>
-            <p style={{ color: '#5f5e5a', fontSize: 14, marginTop: 4 }}>{campaign.objective}</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 16 }}>
+          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+            {campaign.productImageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- photo produit hébergée par l'utilisateur/le stockage, pas un asset buildé
+              <img
+                src={campaign.productImageUrl}
+                alt="Photo du produit"
+                style={{ width: 56, height: 56, borderRadius: 10, objectFit: 'cover', border: '1px solid var(--border)', flexShrink: 0 }}
+              />
+            )}
+            <div>
+              <h1 style={{ fontSize: 22, fontWeight: 500, margin: 0 }}>{campaign.name}</h1>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 4 }}>{campaign.objective}</p>
+            </div>
           </div>
           <StatusPill status={campaign.status} />
         </div>
 
         {isGenerating && (
           <Card style={{ marginBottom: 20 }}>
-            <p style={{ fontSize: 13.5, color: '#5f5e5a', margin: 0 }}>
+            <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>
               L'orchestration IA est en cours (analyse → stratégie → copywriting → visuel)...
               Cette page se rafraîchit automatiquement.
             </p>
@@ -127,12 +137,12 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
       <Card style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Générations IA</h2>
         {(!campaign.generations || campaign.generations.length === 0) && (
-          <p style={{ color: '#5f5e5a', fontSize: 14 }}>Aucune génération pour le moment.</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Aucune génération pour le moment.</p>
         )}
         {campaign.generations?.map((g: any) => (
-          <div key={g.id} style={{ padding: '10px 0', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+          <div key={g.id} style={{ padding: '10px 0', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
             <strong>{g.taskType}</strong>
-            <span style={{ color: '#5f5e5a' }}>{GENERATION_STATUS_LABELS[g.status] ?? g.status} · {g.provider}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{GENERATION_STATUS_LABELS[g.status] ?? g.status} · {g.provider}</span>
           </div>
         ))}
       </Card>
@@ -147,17 +157,17 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
           </div>
 
           {campaign.moderationChecks?.map((m: any) => (
-            <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderTop: '1px solid #eee', fontSize: 12.5 }}>
+            <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 12.5 }}>
               <span style={{ width: 160, flexShrink: 0 }}>{m.checkType}</span>
-              <span style={{ flex: 1, color: '#5f5e5a' }}>{m.summary}</span>
+              <span style={{ flex: 1, color: 'var(--text-secondary)' }}>{m.summary}</span>
               <StatusPill status={m.status} />
             </div>
           ))}
 
           {campaign.brandConsistencyScore != null && (
             <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 12.5, color: '#5f5e5a', marginBottom: 8 }}>
-                Cohérence de marque : <strong style={{ color: '#1a1a18' }}>{campaign.brandConsistencyScore}/100</strong>
+              <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                Cohérence de marque : <strong style={{ color: 'var(--text-primary)' }}>{campaign.brandConsistencyScore}/100</strong>
               </div>
               {campaign.brandConsistencyChecks?.map((b: any) => (
                 <ScoreBar key={b.id} label={b.label} value={b.score} />
@@ -174,7 +184,7 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
             </Button>
           </div>
           {!canApproveRole && (
-            <p style={{ fontSize: 11.5, color: '#9a9992', marginTop: 8, marginBottom: 0 }}>
+            <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, marginBottom: 0 }}>
               Réservé au rôle Marketing Manager et au-dessus.
             </p>
           )}
@@ -182,9 +192,9 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
       )}
 
       {campaign.status === 'REJECTED' && (
-        <Card style={{ marginBottom: 16, borderColor: '#e8b8b0' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: '#a3352d', marginBottom: 4 }}>Campagne rejetée</div>
-          <div style={{ fontSize: 13, color: '#5f5e5a' }}>{campaign.rejectionReason}</div>
+        <Card style={{ marginBottom: 16, borderColor: 'var(--accent-danger)' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-danger)', marginBottom: 4 }}>Campagne rejetée</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{campaign.rejectionReason}</div>
         </Card>
       )}
 
@@ -231,12 +241,12 @@ function PublishBlock({ campaignId, onPublished }: { campaignId: string; onPubli
       <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Publication</h2>
       <ErrorText message={error} />
       {connections.length === 0 ? (
-        <p style={{ fontSize: 13.5, color: '#5f5e5a' }}>
+        <p style={{ fontSize: 13.5, color: 'var(--text-secondary)' }}>
           Aucun réseau social connecté pour le moment.
         </p>
       ) : (
         connections.map((c) => (
-          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid #eee' }}>
+          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
             <span style={{ fontSize: 13.5 }}>{c.platform} — {c.externalAccountName}</span>
             <Button onClick={() => publish(c.id)} disabled={publishing === c.id}>
               {publishing === c.id ? 'Publication...' : 'Publier'}
@@ -270,7 +280,7 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
   }, [campaignId, campaign.status]);
 
   if (campaign.status !== 'PUBLISHED') {
-    return <Card><p style={{ fontSize: 13.5, color: '#5f5e5a', margin: 0 }}>Les statistiques ne sont disponibles qu'une fois la campagne publiée.</p></Card>;
+    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Les statistiques ne sont disponibles qu'une fois la campagne publiée.</p></Card>;
   }
 
   async function submitConversion(e: React.FormEvent) {
@@ -299,7 +309,7 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
             <Stat label="ROAS" value={summary.roas != null ? `${summary.roas.toFixed(1)}x` : 'Non calculable'} />
           </div>
           {summary.roas == null && (
-            <p style={{ fontSize: 11.5, color: '#9a9992', marginTop: 10, marginBottom: 0 }}>
+            <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, marginBottom: 0 }}>
               ROAS non calculable sans valeur de conversion enregistrée (cf. formulaire ci-dessous).
             </p>
           )}
@@ -309,10 +319,10 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
       <Card style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Répartition par canal</h2>
         {channels.length === 0 ? (
-          <p style={{ fontSize: 13, color: '#9a9992' }}>Aucune donnée pour le moment.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucune donnée pour le moment.</p>
         ) : (
           channels.map((c: any) => (
-            <div key={c.platform} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid #eee', fontSize: 13 }}>
+            <div key={c.platform} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
               <span>{c.platform}</span>
               <span className="mono">{c.impressions ?? 0} impr. · {c.ctr != null ? `${c.ctr.toFixed(1)}%` : '—'} CTR</span>
             </div>
@@ -322,12 +332,12 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
 
       <Card style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Répartition par créative</h2>
-        <p style={{ fontSize: 11.5, color: '#9a9992', marginTop: -6, marginBottom: 10 }}>Quelle variation a réellement gagné.</p>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -6, marginBottom: 10 }}>Quelle variation a réellement gagné.</p>
         {content.length === 0 ? (
-          <p style={{ fontSize: 13, color: '#9a9992' }}>Aucune donnée pour le moment.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucune donnée pour le moment.</p>
         ) : (
           content.map((c: any, i: number) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid #eee', fontSize: 13 }}>
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
               <span>{c.version?.label ? `Variation ${c.version.label}` : `Version ${c.version?.versionNumber ?? ''}`} — {c.version?.contentPiece?.channel}</span>
               <span className="mono">{c.impressions ?? 0} impr. · {c.ctr != null ? `${c.ctr.toFixed(1)}%` : '—'} CTR</span>
             </div>
@@ -337,17 +347,17 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
 
       <Card>
         <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Enregistrer une conversion</h2>
-        <p style={{ fontSize: 11.5, color: '#9a9992', marginTop: -6, marginBottom: 12 }}>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -6, marginBottom: 12 }}>
           Aucun adaptateur ne remonte de conversions programmatiquement — code promo, UTM ou déclaration commerciale.
         </p>
         <form onSubmit={submitConversion} style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <label style={{ fontSize: 12 }}>
-            <span style={{ display: 'block', color: '#5f5e5a', marginBottom: 4 }}>Nombre</span>
-            <input type="number" min={1} value={conversionCount} onChange={(e) => setConversionCount(e.target.value)} style={{ fontSize: 13, padding: '8px 10px', borderRadius: 8, border: '1px solid #d8d6cf', width: 90 }} />
+            <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>Nombre</span>
+            <input type="number" min={1} value={conversionCount} onChange={(e) => setConversionCount(e.target.value)} style={{ fontSize: 13, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', width: 90 }} />
           </label>
           <label style={{ fontSize: 12 }}>
-            <span style={{ display: 'block', color: '#5f5e5a', marginBottom: 4 }}>Valeur totale (€)</span>
-            <input type="number" min={0} value={conversionValue} onChange={(e) => setConversionValue(e.target.value)} style={{ fontSize: 13, padding: '8px 10px', borderRadius: 8, border: '1px solid #d8d6cf', width: 110 }} />
+            <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>Valeur totale (€)</span>
+            <input type="number" min={0} value={conversionValue} onChange={(e) => setConversionValue(e.target.value)} style={{ fontSize: 13, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', width: 110 }} />
           </label>
           <Button type="submit" disabled={savingConversion || !conversionCount || !conversionValue}>
             {savingConversion ? 'Enregistrement...' : 'Enregistrer'}
@@ -361,7 +371,7 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div style={{ fontSize: 11.5, color: '#9a9992', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 2 }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 600 }}>{value}</div>
     </div>
   );
@@ -419,7 +429,7 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
   }
 
   if (pieces.length === 0) {
-    return <Card><p style={{ fontSize: 13.5, color: '#5f5e5a', margin: 0 }}>Aucun contenu généré pour le moment — le Content Studio se peuple automatiquement dès que l'orchestration IA produit un résultat.</p></Card>;
+    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Aucun contenu généré pour le moment — le Content Studio se peuple automatiquement dès que l'orchestration IA produit un résultat.</p></Card>;
   }
 
   return (
@@ -446,7 +456,7 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
             </>
           ) : (
             <>
-              <p style={{ fontSize: 13.5, whiteSpace: 'pre-wrap', color: '#1a1a18' }}>{piece.currentVersion?.body}</p>
+              <p style={{ fontSize: 13.5, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>{piece.currentVersion?.body}</p>
               <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
                 <Button variant="secondary" onClick={() => { setEditingId(piece.id); setDraftBody(piece.currentVersion?.body ?? ''); }}>
                   Éditer
@@ -459,17 +469,17 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
                 </Button>
               </div>
               {schedulingId === piece.id && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 10, padding: 12, background: '#f7f7f5', borderRadius: 8 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 10, padding: 12, background: 'var(--bg-raised)', borderRadius: 8 }}>
                   <label style={{ fontSize: 12 }}>
-                    <span style={{ display: 'block', color: '#5f5e5a', marginBottom: 4 }}>Canal connecté</span>
-                    <select value={scheduleConnectionId} onChange={(e) => setScheduleConnectionId(e.target.value)} style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 6, border: '1px solid #d8d6cf' }}>
+                    <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>Canal connecté</span>
+                    <select value={scheduleConnectionId} onChange={(e) => setScheduleConnectionId(e.target.value)} style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border-strong)' }}>
                       <option value="">Sélectionner...</option>
                       {connections.map((c) => <option key={c.id} value={c.id}>{c.platform} — {c.externalAccountName}</option>)}
                     </select>
                   </label>
                   <label style={{ fontSize: 12 }}>
-                    <span style={{ display: 'block', color: '#5f5e5a', marginBottom: 4 }}>Date et heure</span>
-                    <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 6, border: '1px solid #d8d6cf' }} />
+                    <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>Date et heure</span>
+                    <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border-strong)' }} />
                   </label>
                   <Button onClick={() => schedule(piece.id)}>Confirmer</Button>
                 </div>
@@ -480,8 +490,8 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
           {/* Historique de versions — jamais d'écrasement, une variation A/B partage le même
               variantGroup mais porte un label différent (cf. ContentVersion côté backend). */}
           {piece.versions?.length > 1 && (
-            <div style={{ marginTop: 12, borderTop: '1px solid #eee', paddingTop: 10 }}>
-              <div style={{ fontSize: 11.5, color: '#9a9992', marginBottom: 6 }}>Versions</div>
+            <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 6 }}>Versions</div>
               {piece.versions.map((v: any) => (
                 <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', fontSize: 12 }}>
                   <span>
@@ -489,7 +499,7 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
                     {v.id === piece.currentVersionId ? ' — actuelle' : ''}
                   </span>
                   {v.id !== piece.currentVersionId && (
-                    <button onClick={() => selectVersion(piece.id, v.id)} style={{ fontSize: 11.5, background: 'none', border: 'none', color: '#5f5e5a', textDecoration: 'underline', cursor: 'pointer' }}>
+                    <button onClick={() => selectVersion(piece.id, v.id)} style={{ fontSize: 11.5, background: 'none', border: 'none', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer' }}>
                       Utiliser celle-ci
                     </button>
                   )}
@@ -537,7 +547,7 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
   }
 
   if (campaign.status !== 'PUBLISHED') {
-    return <Card><p style={{ fontSize: 13.5, color: '#5f5e5a', margin: 0 }}>L'Optimizer analyse les campagnes publiées — revenez ici une fois cette campagne diffusée.</p></Card>;
+    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>L'Optimizer analyse les campagnes publiées — revenez ici une fois cette campagne diffusée.</p></Card>;
   }
 
   return (
@@ -549,7 +559,7 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
       </div>
 
       {optimizations.length === 0 ? (
-        <Card><p style={{ fontSize: 13.5, color: '#5f5e5a', margin: 0 }}>Aucune recommandation pour le moment.</p></Card>
+        <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Aucune recommandation pour le moment.</p></Card>
       ) : (
         optimizations.map((o: any) => (
           <Card key={o.id} style={{ marginBottom: 12 }}>
@@ -558,10 +568,10 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
               <StatusPill status={o.status} />
             </div>
             {o.details?.actions?.map((a: any, i: number) => (
-              <div key={i} style={{ padding: '8px 0', borderTop: '1px solid #eee' }}>
-                <div style={{ fontSize: 12, color: '#9a9992' }}>{a.type}</div>
+              <div key={i} style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{a.type}</div>
                 <div style={{ fontSize: 13 }}>{a.description}</div>
-                <div style={{ fontSize: 11.5, color: '#4a9d7f', marginTop: 2 }}>{a.expectedImpact}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--accent-done)', marginTop: 2 }}>{a.expectedImpact}</div>
               </div>
             ))}
             {o.status === 'PENDING' && (

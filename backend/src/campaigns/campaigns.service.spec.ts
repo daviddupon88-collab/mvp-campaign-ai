@@ -1,17 +1,21 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { CampaignsService } from './campaigns.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EntitlementsService } from '../plans/entitlements.service';
 import { CampaignTemplatesService } from '../campaign-templates/campaign-templates.service';
 
-function buildService(overrides?: { campaignFindFirst?: any }) {
+function buildService(overrides?: { campaignFindFirst?: any; assetFindFirst?: any }) {
   const campaignCreate = jest.fn().mockResolvedValue({ id: 'campaign-1' });
   const campaignUpdate = jest.fn().mockResolvedValue({});
+  const assetFindFirst = jest.fn().mockResolvedValue(overrides?.assetFindFirst);
   const prisma = {
     campaign: {
       create: campaignCreate,
       update: campaignUpdate,
       findFirst: jest.fn().mockResolvedValue(overrides?.campaignFindFirst ?? { id: 'campaign-1', status: 'REJECTED', channels: [] }),
+    },
+    asset: {
+      findFirst: assetFindFirst,
     },
   } as unknown as PrismaService;
 
@@ -29,7 +33,7 @@ function buildService(overrides?: { campaignFindFirst?: any }) {
   const templatesService = {} as unknown as CampaignTemplatesService;
 
   const service = new CampaignsService(prisma, queue, templatesService, entitlements);
-  return { service, prisma, queue, entitlements, assertChannelsAllowed, campaignCreate };
+  return { service, prisma, queue, entitlements, assertChannelsAllowed, campaignCreate, campaignUpdate, assetFindFirst };
 }
 
 // Vérifie la correction du gap identifié dans le README (item 55) : la restriction de
@@ -89,5 +93,94 @@ describe('CampaignsService — restriction de canaux à la création', () => {
     await service.regenerate('org-1', 'campaign-1', { ...baseDto });
 
     expect(assertChannelsAllowed).not.toHaveBeenCalled();
+  });
+});
+
+// Vérifie le flux d'upload photo dans le wizard de création ("une photo suffit", cf. gap
+// identifié entre la promesse de la landing page et le wizard réel — jusqu'ici aucune photo
+// n'était jamais transmise à l'Orchestrator IA).
+describe('CampaignsService — photo produit à la création', () => {
+  const IMAGE_ASSET = { id: 'asset-1', organizationId: 'org-1', type: 'IMAGE', url: 'https://storage.example.com/asset-1.png' };
+
+  it('refuse la création si ni description ni photo ne sont fournies', async () => {
+    const { service, campaignCreate } = buildService();
+
+    await expect(
+      service.create('org-1', { name: 'Campagne', objective: 'Objectif' } as any),
+    ).rejects.toThrow(BadRequestException);
+    expect(campaignCreate).not.toHaveBeenCalled();
+  });
+
+  it('autorise la création avec une photo seule, sans description texte', async () => {
+    const { service, campaignCreate, assetFindFirst } = buildService({ assetFindFirst: IMAGE_ASSET });
+
+    await service.create('org-1', { name: 'Campagne', objective: 'Objectif', productImageAssetId: 'asset-1' } as any);
+
+    expect(assetFindFirst).toHaveBeenCalledWith({ where: { id: 'asset-1', organizationId: 'org-1', type: 'IMAGE' } });
+    expect(campaignCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ productImageUrl: 'https://storage.example.com/asset-1.png' }) }),
+    );
+  });
+
+  it('transmet productImageUrl résolue au job de génération, en plus de la persister sur la campagne', async () => {
+    const { service, queue } = buildService({ assetFindFirst: IMAGE_ASSET });
+
+    await service.create('org-1', { name: 'Campagne', objective: 'Objectif', productImageAssetId: 'asset-1' } as any);
+
+    expect(queue.add).toHaveBeenCalledWith(
+      'generate',
+      expect.objectContaining({ productImageUrl: 'https://storage.example.com/asset-1.png' }),
+    );
+  });
+
+  it('refuse (NotFoundException) si l\'asset référencé n\'existe pas ou n\'appartient pas à l\'organisation — jamais d\'URL externe acceptée telle quelle', async () => {
+    const { service, campaignCreate } = buildService({ assetFindFirst: null });
+
+    await expect(
+      service.create('org-1', { name: 'Campagne', objective: 'Objectif', productImageAssetId: 'asset-inconnu' } as any),
+    ).rejects.toThrow(NotFoundException);
+    expect(campaignCreate).not.toHaveBeenCalled();
+  });
+
+  it('sans productImageAssetId, ne consulte jamais la table asset et ne fixe pas productImageUrl', async () => {
+    const { service, campaignCreate, assetFindFirst } = buildService();
+
+    await service.create('org-1', { name: 'Campagne', objective: 'Objectif', productDescription: 'Un produit' } as any);
+
+    expect(assetFindFirst).not.toHaveBeenCalled();
+    expect(campaignCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ productImageUrl: undefined }) }),
+    );
+  });
+
+  it('régénération : réutilise la photo déjà enregistrée sur la campagne quand aucune nouvelle photo n\'est fournie', async () => {
+    const { service, campaignUpdate, assetFindFirst } = buildService({
+      campaignFindFirst: { id: 'campaign-1', status: 'REJECTED', channels: [], productImageUrl: 'https://storage.example.com/ancienne.png' },
+    });
+
+    await service.regenerate('org-1', 'campaign-1', { name: 'Campagne', productDescription: 'Produit', objective: 'Objectif' } as any);
+
+    expect(assetFindFirst).not.toHaveBeenCalled();
+    expect(campaignUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ productImageUrl: 'https://storage.example.com/ancienne.png' }) }),
+    );
+  });
+
+  it('régénération : une nouvelle photo fournie remplace l\'ancienne', async () => {
+    const { service, campaignUpdate } = buildService({
+      campaignFindFirst: { id: 'campaign-1', status: 'REJECTED', channels: [], productImageUrl: 'https://storage.example.com/ancienne.png' },
+      assetFindFirst: IMAGE_ASSET,
+    });
+
+    await service.regenerate('org-1', 'campaign-1', {
+      name: 'Campagne',
+      productDescription: 'Produit',
+      objective: 'Objectif',
+      productImageAssetId: 'asset-1',
+    } as any);
+
+    expect(campaignUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ productImageUrl: 'https://storage.example.com/asset-1.png' }) }),
+    );
   });
 });

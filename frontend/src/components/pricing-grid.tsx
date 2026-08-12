@@ -30,7 +30,7 @@ export function PricingGrid({
   currentPlanKey?: string;
 }) {
   if (plans.length === 0) {
-    return <p style={{ textAlign: 'center', color: '#9a9992', fontSize: 13 }}>Chargement des tarifs...</p>;
+    return <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Chargement des tarifs...</p>;
   }
 
   return (
@@ -43,31 +43,50 @@ export function PricingGrid({
           <div
             key={plan.key}
             style={{
-              background: isFeatured ? '#1a1a18' : '#fff',
-              color: isFeatured ? '#fff' : '#1a1a18',
-              border: `1px solid ${isFeatured ? '#1a1a18' : '#e5e3dd'}`,
-              borderRadius: 12,
+              position: 'relative',
+              background: isFeatured ? 'var(--bg-panel-2)' : 'var(--bg-panel)',
+              color: 'var(--text-primary)',
+              border: `1px solid ${isFeatured ? 'var(--accent-brand)' : 'var(--border)'}`,
+              borderRadius: 'var(--radius)',
               padding: 22,
               display: 'flex',
               flexDirection: 'column',
             }}
           >
-            <div style={{ fontSize: 13, color: isFeatured ? '#c9c8c3' : '#5f5e5a', marginBottom: 4 }}>{plan.name}</div>
-            <div style={{ fontSize: 26, fontWeight: 600, marginBottom: 2 }}>
+            {isFeatured && (
+              <span
+                className="mono"
+                style={{
+                  position: 'absolute',
+                  top: -11,
+                  left: 22,
+                  background: 'var(--accent-brand)',
+                  color: 'var(--bg-page)',
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  padding: '3px 10px',
+                  borderRadius: 20,
+                }}
+              >
+                Populaire
+              </span>
+            )}
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>{plan.name}</div>
+            <div style={{ fontFamily: 'var(--font-space-grotesk)', fontSize: 26, fontWeight: 600, marginBottom: 2 }}>
               {plan.priceMonthly !== null ? `${plan.priceMonthly}€` : 'Sur devis'}
               {plan.priceMonthly !== null && <span style={{ fontSize: 13, fontWeight: 400 }}> /mois</span>}
             </div>
-            <div style={{ fontSize: 12, color: isFeatured ? '#8ab4a0' : '#4a9d7f', marginBottom: 16 }}>
+            <div className="mono" style={{ fontSize: 11.5, color: 'var(--accent-done)', marginBottom: 16 }}>
               {plan.aiCreditsIncluded.toLocaleString('fr-FR')} crédits IA/mois
             </div>
-            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', fontSize: 12.5, flex: 1, color: isFeatured ? '#c9c8c3' : '#5f5e5a' }}>
-              <li style={{ padding: '5px 0', borderTop: `1px solid ${isFeatured ? '#3a3a38' : '#eee'}` }}>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', fontSize: 12.5, flex: 1, color: 'var(--text-secondary)' }}>
+              <li style={{ padding: '5px 0', borderTop: '1px solid var(--border)' }}>
                 {plan.maxSeats ? `${plan.maxSeats} sièges` : 'Sièges illimités'}
               </li>
-              <li style={{ padding: '5px 0', borderTop: `1px solid ${isFeatured ? '#3a3a38' : '#eee'}` }}>
+              <li style={{ padding: '5px 0', borderTop: '1px solid var(--border)' }}>
                 {plan.maxActiveCampaigns ? `${plan.maxActiveCampaigns} campagnes actives` : 'Campagnes illimitées'}
               </li>
-              <li style={{ padding: '5px 0', borderTop: `1px solid ${isFeatured ? '#3a3a38' : '#eee'}` }}>
+              <li style={{ padding: '5px 0', borderTop: '1px solid var(--border)' }}>
                 {plan.maxChannels ? `${plan.maxChannels} canaux par campagne` : 'Canaux illimités'}
               </li>
             </ul>

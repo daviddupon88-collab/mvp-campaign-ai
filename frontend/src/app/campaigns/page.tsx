@@ -33,7 +33,7 @@ export default function CampaignsPage() {
           </Link>
         </div>
 
-        {loading && <p style={{ color: '#5f5e5a', fontSize: 14 }}>Chargement...</p>}
+        {loading && <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Chargement...</p>}
 
         <div style={{ display: 'grid', gap: 12 }}>
           {campaigns.map((c) => (
@@ -41,9 +41,9 @@ export default function CampaignsPage() {
               <Card>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <strong style={{ fontSize: 15 }}>{c.name}</strong>
-                  <span style={{ fontSize: 12, color: '#5f5e5a' }}>{c.status}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{c.status}</span>
                 </div>
-                {c.objective && <p style={{ fontSize: 13, color: '#5f5e5a', marginBottom: 0 }}>{c.objective}</p>}
+                {c.objective && <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 0 }}>{c.objective}</p>}
               </Card>
             </Link>
           ))}
