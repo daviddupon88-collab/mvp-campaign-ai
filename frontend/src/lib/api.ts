@@ -220,4 +220,8 @@ export const api = {
 
   inviteTeamMember: (data: { email: string; role: string }) =>
     request<any>('/team/invitations', { method: 'POST', body: JSON.stringify(data) }),
+
+  getMetaCapiConfig: () => request<{ configured: boolean; pixelId: string | null; enabled: boolean }>('/integrations/meta-capi'),
+  updateMetaCapiConfig: (data: { pixelId: string; accessToken: string; enabled?: boolean }) =>
+    request<{ configured: boolean; pixelId: string | null; enabled: boolean }>('/integrations/meta-capi', { method: 'PUT', body: JSON.stringify(data) }),
 };

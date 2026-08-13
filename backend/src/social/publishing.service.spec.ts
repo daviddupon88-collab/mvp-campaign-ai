@@ -27,8 +27,9 @@ function buildService(campaign: any, overrides?: { publishedPostFindUnique?: any
   } as any;
 
   const brandService = { logMemory: jest.fn().mockResolvedValue(undefined) } as any;
+  const configService = { get: (_key: string, fallback?: string) => fallback } as any;
 
-  const service = new PublishingService(prisma, connectionsService, entitlements, brandService);
+  const service = new PublishingService(prisma, connectionsService, entitlements, brandService, configService);
   return { service, campaignUpdate, adapterPublish, publishedPostUpsert, prisma };
 }
 
@@ -97,6 +98,34 @@ describe('PublishingService.publishToChannel — vérification APPROVED', () => 
 
     expect(adapterPublish).not.toHaveBeenCalled();
     expect(result.status).toBe('PUBLISHED');
+  });
+});
+
+// Couvre l'infrastructure de tracking de clics (cf. plan "Intégration Conversions API
+// réelle") : l'URL réelle du client ne doit JAMAIS atteindre la plateforme telle quelle
+// quand elle est fournie — sans quoi la redirection de tracking (/r/:id) qui capture
+// fbclid/gclid n'est jamais empruntée par un vrai clic publicitaire.
+describe('PublishingService.publishToChannel — URL de tracking', () => {
+  it('remplace linkUrl par une URL de tracking /r/:id et persiste destinationUrl quand linkUrl est fourni', async () => {
+    const { service, adapterPublish, publishedPostUpsert } = buildService({ id: 'campaign-1', status: 'APPROVED' });
+
+    await service.publishToChannel({ ...BASE_REQUEST, linkUrl: 'https://client.example.com/produit' });
+
+    expect(publishedPostUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ destinationUrl: 'https://client.example.com/produit' }),
+        update: expect.objectContaining({ destinationUrl: 'https://client.example.com/produit' }),
+      }),
+    );
+    expect(adapterPublish).toHaveBeenCalledWith(expect.objectContaining({ linkUrl: 'http://localhost:3001/r/post-1' }));
+  });
+
+  it('ne construit aucune URL de tracking quand linkUrl est absent', async () => {
+    const { service, adapterPublish } = buildService({ id: 'campaign-1', status: 'APPROVED' });
+
+    await service.publishToChannel(BASE_REQUEST);
+
+    expect(adapterPublish).toHaveBeenCalledWith(expect.objectContaining({ linkUrl: undefined }));
   });
 });
 

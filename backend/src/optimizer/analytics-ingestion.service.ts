@@ -4,6 +4,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SocialConnectionsService } from '../social/social-connections.service';
 import { TokenCryptoService } from '../common/crypto/token-crypto.service';
 import { withRetry } from '../social/retry.util';
+import { MetaCapiService } from '../integrations/meta-capi.service';
+
+// Devise unique de l'application — cf. plan-catalog.ts, tous les prix sont en EUR, aucun
+// support multi-devise ailleurs dans le produit. Pas une nouvelle incohérence introduite ici.
+const DEFAULT_CURRENCY = 'EUR';
 
 interface RawInsights {
   impressions?: number;
@@ -27,6 +32,7 @@ export class AnalyticsIngestionService {
     private readonly connectionsService: SocialConnectionsService,
     private readonly tokenCrypto: TokenCryptoService,
     private readonly config: ConfigService,
+    private readonly metaCapi: MetaCapiService,
   ) {}
 
   private useMock(): boolean {
@@ -177,7 +183,7 @@ export class AnalyticsIngestionService {
     const periodEnd = new Date();
     const periodStart = new Date(periodEnd.getTime() - 24 * 60 * 60 * 1000);
 
-    return this.prisma.campaignMetric.create({
+    const metric = await this.prisma.campaignMetric.create({
       data: {
         organizationId,
         campaignId,
@@ -188,6 +194,13 @@ export class AnalyticsIngestionService {
         raw: params.note ? { note: params.note, source: 'manual' } : { source: 'manual' },
       },
     });
+
+    // Best-effort, hors du chemin critique : la conversion est déjà enregistrée côté
+    // Campaign-ai (ROAS calculable) même si ce push externe échoue ou est ignoré (aucune
+    // config Meta CAPI, aucun clic récent à attribuer) — cf. MetaCapiService.
+    void this.metaCapi.pushConversion(organizationId, campaignId, { value: params.value, currency: DEFAULT_CURRENCY });
+
+    return metric;
   }
 
   async getLatestMetric(organizationId: string, campaignId: string) {

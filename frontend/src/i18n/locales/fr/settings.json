@@ -71,6 +71,22 @@
     "languageHint": "Choisissez la langue utilisée dans l'interface de Campaign-ai. Elle est indépendante de la langue utilisée pour générer une campagne.",
     "currentLanguage": "Langue actuelle"
   },
+  "integrations": {
+    "title": "Intégrations",
+    "metaCapiTitle": "Meta Conversions API",
+    "metaCapiSubtitle": "Les conversions saisies manuellement sont poussées vers Meta, rattachées à un vrai clic publicitaire quand il en existe un dans les 7 derniers jours — jamais envoyées sans attribution.",
+    "pixelIdLabel": "Pixel ID",
+    "pixelIdPlaceholder": "123456789012345",
+    "accessTokenLabel": "Token d'accès Conversions API",
+    "accessTokenPlaceholder": "Généré dans Meta Events Manager",
+    "accessTokenHint": "Ce n'est pas l'identifiant utilisé pour publier — générez ce token dans Meta Events Manager, dans les paramètres de votre pixel.",
+    "enabledLabel": "Activé",
+    "save": "Enregistrer",
+    "saving": "Enregistrement...",
+    "saved": "✓ Enregistré",
+    "configuredStatus": "Configuré — pixel {pixelId}",
+    "notConfiguredStatus": "Pas encore configuré"
+  },
   "admin": {
     "title": "Administration plateforme",
     "restricted": "Cette section est réservée à l'équipe Campaign-ai. Si vous pensez devoir y avoir accès, contactez un administrateur plateforme.",

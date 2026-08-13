@@ -71,6 +71,22 @@
     "languageHint": "اختر اللغة المستخدمة في واجهة Campaign-ai. وهي مستقلة عن اللغة المستخدمة لإنشاء الحملة.",
     "currentLanguage": "اللغة الحالية"
   },
+  "integrations": {
+    "title": "عمليات التكامل",
+    "metaCapiTitle": "واجهة Meta Conversions API",
+    "metaCapiSubtitle": "تُرسَل التحويلات المسجَّلة يدويًا إلى Meta، وتُربط بنقرة إعلانية حقيقية إن وُجدت خلال آخر 7 أيام — لا تُرسَل أبدًا دون إسناد.",
+    "pixelIdLabel": "معرّف البكسل (Pixel ID)",
+    "pixelIdPlaceholder": "123456789012345",
+    "accessTokenLabel": "رمز وصول Conversions API",
+    "accessTokenPlaceholder": "يُنشأ من Meta Events Manager",
+    "accessTokenHint": "ليس بيانات الدخول المستخدمة للنشر — أنشئ هذا الرمز من Meta Events Manager، ضمن إعدادات البكسل الخاص بك.",
+    "enabledLabel": "مفعّل",
+    "save": "حفظ",
+    "saving": "جارٍ الحفظ...",
+    "saved": "✓ تم الحفظ",
+    "configuredStatus": "تم الإعداد — البكسل {pixelId}",
+    "notConfiguredStatus": "لم يُعدّ بعد"
+  },
   "admin": {
     "title": "إدارة المنصة",
     "restricted": "هذا القسم مخصص لفريق Campaign-ai. إذا كنت تعتقد أنه يجب أن يكون لديك وصول، فتواصل مع مسؤول المنصة.",

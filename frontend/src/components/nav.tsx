@@ -45,6 +45,7 @@ export function Nav() {
         <NavLink href="/settings/brand" label={t('brandBrain')} active={pathname === '/settings/brand'} />
         <NavLink href="/settings/team" label={t('team')} active={pathname === '/settings/team'} />
         <NavLink href="/settings/billing" label={t('billing')} active={pathname === '/settings/billing'} />
+        <NavLink href="/settings/integrations" label={t('integrations')} active={pathname === '/settings/integrations'} />
         <NavLink href="/support" label={t('support')} active={pathname?.startsWith('/support') ?? false} />
         <NavLink href="/help" label={t('help')} active={pathname?.startsWith('/help') ?? false} />
         {/* Réservé aux comptes isPlatformAdmin — jamais affiché sinon, même si l'utilisateur

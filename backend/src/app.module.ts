@@ -35,6 +35,7 @@ import { OptimizerModule } from './optimizer/optimizer.module';
 import { CampaignTemplatesModule } from './campaign-templates/campaign-templates.module';
 import { AiEconomicsModule } from './ai-economics/ai-economics.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 
 // Monolithe modulaire (Phase 1 de la roadmap) : chaque module ci-dessous
 // deviendra un candidat naturel à l'extraction en microservice en Phase 2.
@@ -83,6 +84,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     CampaignTemplatesModule,
     AiEconomicsModule,
     AnalyticsModule,
+    IntegrationsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

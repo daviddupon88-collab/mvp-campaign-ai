@@ -141,6 +141,8 @@ model Organization {
   brandMemoryEntries        BrandMemoryEntry[]
   brandMemoryContradictions BrandMemoryContradiction[]
 
+  metaCapiConfig MetaCapiConfig?
+
   @@map("organizations")
 }
 
@@ -274,6 +276,7 @@ model Campaign {
   optimizationRecommendations OptimizationRecommendation[]
   contentPieces            ContentPiece[]
   calendarEntries          CalendarEntry[]
+  trackedClicks            TrackedClick[]
 
   @@index([organizationId])
   @@map("campaigns")
@@ -758,10 +761,63 @@ model PublishedPost {
 
   contentMetrics ContentMetric[]
 
+  // URL réelle de destination fournie par l'appelant à la publication (PublishRequest.linkUrl)
+  // — jamais transmise telle quelle à la plateforme : PublishingService construit à la place
+  // une URL de tracking (/r/:id) qui capture fbclid/gclid au clic avant de rediriger ici.
+  // Sans elle, aucune redirection de tracking n'est possible (cf. TrackedClick).
+  destinationUrl String?
+  trackedClicks  TrackedClick[]
+
   @@unique([campaignId, socialConnectionId])
   @@index([campaignId])
   @@index([organizationId])
   @@map("published_posts")
+}
+
+// Capture d'un identifiant de clic publicitaire (fbclid Meta, gclid Google Ads) au moment où
+// quelqu'un clique sur une publication via l'URL de tracking construite par PublishingService
+// (/r/:publishedPostId) — infrastructure absente jusqu'ici (cf. audit README item 29), sans
+// laquelle ni Meta Conversions API ni Google Ads offline conversion upload ne peuvent
+// attribuer une conversion à un clic réel. MetaCapiService s'appuie sur le fbclid le plus
+// récent d'une campagne pour pousser une conversion manuelle vers Meta avec une vraie
+// attribution plutôt qu'un événement non rattachable.
+model TrackedClick {
+  id     String @id @default(uuid())
+  fbclid String?
+  gclid  String?
+
+  createdAt DateTime @default(now())
+
+  organizationId  String
+  campaignId      String
+  campaign        Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  publishedPostId String
+  publishedPost   PublishedPost @relation(fields: [publishedPostId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([publishedPostId])
+  @@map("tracked_clicks")
+}
+
+// Identifiants Meta Conversions API PAR ORGANISATION — jamais une variable d'environnement
+// globale de la plateforme : chaque client Campaign-ai a son propre Pixel/compte publicitaire
+// Meta, mélanger leurs conversions dans un seul pixel serait incorrect en multi-tenant. Le
+// token n'est pas obtenable via le flux OAuth existant (pages_manage_posts, utilisé pour
+// publier) — généré manuellement par le client dans Meta Events Manager, saisi ici.
+model MetaCapiConfig {
+  id             String  @id @default(uuid())
+  organizationId String  @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  pixelId     String
+  // Chiffré au repos via TokenCryptoService — même garantie que SocialConnection.accessToken.
+  accessToken String
+  enabled     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("meta_capi_configs")
 }
 
 // Connexion à une boutique e-commerce pour importer un catalogue produit

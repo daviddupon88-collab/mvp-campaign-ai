@@ -3,10 +3,13 @@ import { PrismaService } from '../prisma/prisma.service';
 
 function buildService(metrics: any[]) {
   const campaignMetricFindMany = jest.fn().mockResolvedValue(metrics);
-  const prisma = { campaignMetric: { findMany: campaignMetricFindMany } } as unknown as PrismaService;
+  const campaignMetricCreate = jest.fn().mockImplementation((args: any) => Promise.resolve({ id: 'metric-1', ...args.data }));
+  const prisma = { campaignMetric: { findMany: campaignMetricFindMany, create: campaignMetricCreate } } as unknown as PrismaService;
+  const pushConversion = jest.fn().mockResolvedValue(undefined);
+  const metaCapi = { pushConversion } as any;
 
-  const service = new AnalyticsIngestionService(prisma, {} as any, {} as any, {} as any);
-  return { service };
+  const service = new AnalyticsIngestionService(prisma, {} as any, {} as any, {} as any, metaCapi);
+  return { service, campaignMetricCreate, pushConversion };
 }
 
 function metric(overrides: Partial<{ platform: string | null; impressions: number; clicks: number; spend: number; conversions: number; conversionValue: number }>) {
@@ -62,5 +65,19 @@ describe('AnalyticsIngestionService.getAggregatedMetric', () => {
     const { service } = buildService([]);
 
     expect(await service.getAggregatedMetric('org-1', 'campaign-1')).toBeNull();
+  });
+});
+
+// Couvre le branchement vers Meta CAPI (cf. plan "Intégration Conversions API réelle") :
+// une conversion manuelle enregistrée déclenche toujours une tentative de push, best-effort
+// (MetaCapiService décide lui-même de no-op si aucune config/clic n'est disponible).
+describe('AnalyticsIngestionService.recordManualConversion', () => {
+  it('enregistre le CampaignMetric et déclenche le push Meta CAPI avec la valeur déclarée en EUR', async () => {
+    const { service, campaignMetricCreate, pushConversion } = buildService([]);
+
+    await service.recordManualConversion('org-1', 'campaign-1', { count: 2, value: 150 });
+
+    expect(campaignMetricCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ conversions: 2, conversionValue: 150 }) }));
+    expect(pushConversion).toHaveBeenCalledWith('org-1', 'campaign-1', { value: 150, currency: 'EUR' });
   });
 });

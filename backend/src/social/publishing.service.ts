@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { SocialConnectionsService } from './social-connections.service';
 import { EntitlementsService } from '../plans/entitlements.service';
@@ -40,6 +41,7 @@ export class PublishingService {
     private readonly connectionsService: SocialConnectionsService,
     private readonly entitlements: EntitlementsService,
     private readonly brandService: BrandService,
+    private readonly config: ConfigService,
   ) {}
 
   private async assertCampaignApproved(organizationId: string, campaignId: string) {
@@ -104,9 +106,17 @@ export class PublishingService {
         status: 'PENDING',
         attemptCount: 1,
         contentVersionId: req.contentVersionId,
+        destinationUrl: req.linkUrl,
       },
-      update: { status: 'PENDING', attemptCount: { increment: 1 }, errorMessage: null, contentVersionId: req.contentVersionId },
+      update: { status: 'PENDING', attemptCount: { increment: 1 }, errorMessage: null, contentVersionId: req.contentVersionId, destinationUrl: req.linkUrl },
     });
+
+    // L'URL RÉELLE du client n'est jamais transmise telle quelle à la plateforme quand elle
+    // est fournie : on passe à la place une URL de tracking (/r/:id) qui capture fbclid/gclid
+    // au clic avant de rediriger vers `record.destinationUrl` (cf. ClickTrackingController) —
+    // infrastructure requise pour attribuer une conversion manuelle à Meta Conversions API
+    // (cf. MetaCapiService). `record.id` est stable même en cas de retry (upsert ci-dessus).
+    const publishLinkUrl = req.linkUrl ? `${this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001')}/r/${record.id}` : undefined;
 
     let platformResult: { externalPostId: string };
     try {
@@ -117,7 +127,7 @@ export class PublishingService {
             externalAccountId: connection.externalAccountId,
             caption: req.caption,
             mediaUrl: req.mediaUrl,
-            linkUrl: req.linkUrl,
+            linkUrl: publishLinkUrl,
           }),
         { label: `publish ${connection.platform}`, maxAttempts: 3 },
       );
