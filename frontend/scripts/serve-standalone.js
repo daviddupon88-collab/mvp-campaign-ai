@@ -20,8 +20,14 @@ const publicDest = path.join(standaloneDir, 'public');
 cpSync(staticSrc, staticDest, { recursive: true });
 if (existsSync(publicSrc)) cpSync(publicSrc, publicDest, { recursive: true });
 
+// Toujours 3000, jamais `process.env.PORT` : cette variable est déjà définie au niveau du
+// job CI e2e-browser (PORT=3001), destinée à l'étape qui démarre le BACKEND — puisque les
+// variables d'environnement de job s'appliquent à CHAQUE étape, `process.env.PORT || '3000'`
+// récupérait silencieusement ce 3001 au lieu de retomber sur 3000, provoquant un
+// `EADDRINUSE` (le port du backend, déjà occupé) plutôt que de servir le frontend sur le
+// port attendu par playwright.config.ts (`url: 'http://localhost:3000'`).
 const child = spawn(process.execPath, [path.join(standaloneDir, 'server.js')], {
   stdio: 'inherit',
-  env: { ...process.env, PORT: process.env.PORT || '3000' },
+  env: { ...process.env, PORT: '3000' },
 });
 child.on('exit', (code) => process.exit(code ?? 0));
