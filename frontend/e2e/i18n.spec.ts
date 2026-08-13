@@ -64,6 +64,10 @@ test.describe('Internationalisation', () => {
     await expect(page).toHaveURL(/\/login/);
 
     await context.clearCookies();
+    // clearCookies() n'affecte pas le HTML déjà rendu (page /login servie avec le cookie
+    // NEXT_LOCALE=ar avant l'effacement) — un reload est nécessaire pour qu'une nouvelle
+    // requête, sans cookie, retombe sur l'Accept-Language du navigateur (en-US → anglais).
+    await page.reload();
 
     await page.getByLabel('Email').fill(email);
     await page.getByLabel('Password').fill(password);
