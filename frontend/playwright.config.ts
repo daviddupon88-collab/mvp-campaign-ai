@@ -24,7 +24,12 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
   webServer: {
-    command: 'npm run start -- -p 3000',
+    // `next start` ne fonctionne pas avec `output: "standalone"` (next.config.js) — le
+    // serveur autonome doit être lancé via .next/standalone/server.js, avec .next/static et
+    // public/ recopiés à côté (cf. frontend/Dockerfile, qui fait exactement ça pour l'image
+    // Docker). scripts/serve-standalone.js réplique cette étape pour que ce test exerce le
+    // même artefact que celui réellement déployé.
+    command: 'node scripts/serve-standalone.js',
     url: 'http://localhost:3000',
     reuseExistingServer: true,
     timeout: 60_000,
