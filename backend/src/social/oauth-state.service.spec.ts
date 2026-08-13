@@ -8,8 +8,14 @@ import { OAuthStateService } from './oauth-state.service';
 // accepté QUE s'il a été signé par ce service avec le bon secret, et QUE dans sa fenêtre
 // de validité — tout le reste doit être rejeté, pas silencieusement ignoré.
 describe('OAuthStateService', () => {
-  function buildService(secret = 'test-secret'): OAuthStateService {
-    const config = { get: (key: string) => (key === 'OAUTH_STATE_SECRET' ? secret : undefined) } as unknown as ConfigService;
+  function buildService(secret = 'test-secret', previousSecret?: string): OAuthStateService {
+    const config = {
+      get: (key: string) => {
+        if (key === 'OAUTH_STATE_SECRET') return secret;
+        if (key === 'OAUTH_STATE_SECRET_PREVIOUS') return previousSecret;
+        return undefined;
+      },
+    } as unknown as ConfigService;
     return new OAuthStateService(config);
   }
 
@@ -57,5 +63,34 @@ describe('OAuthStateService', () => {
     const expiredState = Buffer.from(`${payload}.${signature}`).toString('base64url');
 
     expect(() => service.verify(expiredState)).toThrow(BadRequestException);
+  });
+
+  // Rotation de OAUTH_STATE_SECRET (cf. .env.example) : un state signé sous l'ancien secret,
+  // en vol au moment d'un déploiement qui bascule le secret courant, doit rester accepté tant
+  // que l'ancien secret est fourni en repli via OAUTH_STATE_SECRET_PREVIOUS.
+  it('accepte un state signé sous l\'ancien secret quand OAUTH_STATE_SECRET_PREVIOUS est configuré (rotation)', () => {
+    const beforeRotation = buildService('old-secret');
+    const state = beforeRotation.create('org-123');
+
+    const afterRotation = buildService('new-secret', 'old-secret');
+    expect(afterRotation.verify(state)).toBe('org-123');
+  });
+
+  it('rejette un state signé sous un secret ni courant ni précédent, même avec un secret précédent configuré', () => {
+    const attacker = buildService('secret-attacker');
+    const state = attacker.create('org-123');
+
+    const server = buildService('new-secret', 'old-secret');
+    expect(() => server.verify(state)).toThrow(BadRequestException);
+  });
+
+  it('ne signe jamais de nouveau state avec l\'ancien secret, même quand il est configuré', () => {
+    const server = buildService('new-secret', 'old-secret');
+    const state = server.create('org-123');
+
+    // Un vérificateur qui ne connaîtrait QUE l'ancien secret ne doit jamais valider un state
+    // fraîchement créé — sinon la rotation ne "tournerait" jamais réellement.
+    const onlyOldSecret = buildService('old-secret');
+    expect(() => onlyOldSecret.verify(state)).toThrow(BadRequestException);
   });
 });
