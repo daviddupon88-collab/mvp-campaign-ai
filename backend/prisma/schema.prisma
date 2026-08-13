@@ -1042,6 +1042,9 @@ enum NotificationType {
   TEAM_INVITATION
   SUPPORT_REPLY
   CAMPAIGN_GENERATION_FAILED
+  TEAM_MEMBER_JOINED
+  TEAM_MEMBER_REMOVED
+  TEAM_ROLE_CHANGED
 }
 
 // Notification in-app, doublée d'un envoi email best-effort (cf. NotificationsService) —

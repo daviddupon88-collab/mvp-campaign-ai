@@ -15,7 +15,10 @@ export interface NotifyParams {
     | 'PAYMENT_FAILED'
     | 'TEAM_INVITATION'
     | 'SUPPORT_REPLY'
-    | 'CAMPAIGN_GENERATION_FAILED';
+    | 'CAMPAIGN_GENERATION_FAILED'
+    | 'TEAM_MEMBER_JOINED'
+    | 'TEAM_MEMBER_REMOVED'
+    | 'TEAM_ROLE_CHANGED';
   title: string;
   body: string;
   link?: string;

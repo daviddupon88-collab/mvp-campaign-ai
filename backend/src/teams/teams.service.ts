@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EntitlementsService } from '../plans/entitlements.service';
 import { EmailService } from '../notifications/email/email.service';
 import { emailTemplates } from '../notifications/email/email-templates';
+import { NotificationsService } from '../notifications/notifications.service';
 import { roleLevel } from '../common/role-hierarchy';
 
 export interface TeamActor {
@@ -25,6 +26,7 @@ export class TeamsService {
     private readonly entitlements: EntitlementsService,
     private readonly emailService: EmailService,
     private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async listMembers(organizationId: string) {
@@ -175,6 +177,17 @@ export class TeamsService {
       this.prisma.invitation.update({ where: { id: invitation.id }, data: { status: 'ACCEPTED', acceptedAt: new Date() } }),
     ]);
 
+    // Best-effort : visible dans le centre de notifications des OWNER/ADMIN existants,
+    // en plus de l'email d'invitation déjà envoyé par invite() — jusqu'ici, un nouveau
+    // membre n'apparaissait que si quelqu'un consultait /settings/team.
+    await this.notifications.notifyOrganization(invitation.organizationId, ['OWNER', 'ADMIN'], {
+      organizationId: invitation.organizationId,
+      type: 'TEAM_MEMBER_JOINED',
+      title: "Nouveau membre dans l'équipe",
+      body: `${currentUser.email} a rejoint l'équipe en tant que ${invitation.role}.`,
+      link: '/settings/team',
+    });
+
     return membership;
   }
 
@@ -203,7 +216,18 @@ export class TeamsService {
       throw new ForbiddenException("Vous ne pouvez pas modifier le rôle d'un membre de rang supérieur au vôtre");
     }
 
-    return this.prisma.membership.update({ where: { id: membershipId }, data: { role: newRole as any } });
+    const updated = await this.prisma.membership.update({ where: { id: membershipId }, data: { role: newRole as any } });
+
+    const targetUser = await this.prisma.user.findUnique({ where: { id: membership.userId }, select: { email: true } });
+    await this.notifications.notifyOrganization(organizationId, ['OWNER', 'ADMIN'], {
+      organizationId,
+      type: 'TEAM_ROLE_CHANGED',
+      title: "Changement de rôle dans l'équipe",
+      body: `${actor.email} a changé le rôle de ${targetUser?.email ?? 'un membre'} : ${membership.role} → ${newRole}.`,
+      link: '/settings/team',
+    });
+
+    return updated;
   }
 
   async removeMember(organizationId: string, actor: TeamActor, membershipId: string) {
@@ -212,6 +236,17 @@ export class TeamsService {
       throw new ForbiddenException("Vous ne pouvez pas retirer un membre de rang supérieur au vôtre");
     }
 
-    return this.prisma.membership.delete({ where: { id: membershipId } });
+    const targetUser = await this.prisma.user.findUnique({ where: { id: membership.userId }, select: { email: true } });
+    const deleted = await this.prisma.membership.delete({ where: { id: membershipId } });
+
+    await this.notifications.notifyOrganization(organizationId, ['OWNER', 'ADMIN'], {
+      organizationId,
+      type: 'TEAM_MEMBER_REMOVED',
+      title: "Membre retiré de l'équipe",
+      body: `${actor.email} a retiré ${targetUser?.email ?? 'un membre'} de l'équipe.`,
+      link: '/settings/team',
+    });
+
+    return deleted;
   }
 }
