@@ -75,8 +75,10 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     name: 'Starter',
     priceMonthly: 39,
     // 920, pas 1150 : passe du 2026-08-13 — prix INCHANGÉ, crédits réaménagés pour cibler
-    // une marge NETTE de 40% (après coût IA réel, Stripe 1,5%+0,25€, et hypothèses
-    // infra/support ~4€+3€/mois — cf. l'audit "coût réel d'un crédit"). Formule : crédits =
+    // une marge NETTE de 40% (après coût IA réel, Stripe 1,5%+0,25€, et infra/support
+    // ~4€+3€/mois — VALIDÉ le 2026-08-13 via chiffrage Railway réel : ~59€/mois pour toute
+    // la plateforme partagée entre tous les clients, ce qui rend cette allocation par client
+    // conservatrice, pas sous-estimée — cf. README item 100). Formule : crédits =
     // (0,60 × prix − Stripe − infra − support) / $0,016874 (coût $ réel moyen par crédit
     // d'une campagne de référence 3 canaux + image + vidéo + garde-fous, cf. AiEconomicsService
     // et les tarifs fournisseurs vérifiés le 2026-08-13). Aucun changement de `CREDIT_COSTS`.
@@ -100,8 +102,8 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'growth',
     name: 'Growth',
     priceMonthly: 99,
-    // 2585, pas 4600 : même méthode que Starter (cf. commentaire ci-dessus), hypothèses
-    // infra/support ~6€+8€/mois.
+    // 2585, pas 4600 : même méthode que Starter (cf. commentaire ci-dessus), infra/support
+    // ~6€+8€/mois — VALIDÉ le 2026-08-13 (cf. commentaire Starter et README item 100).
     aiCreditsIncluded: 2585,
     maxSeats: 10,
     // 10, pas 20 : corrigé le 2026-08-13 — ⌊2585 / 241⌋ = 10 campagnes de référence avec vidéo
@@ -120,8 +122,9 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'business',
     name: 'Business',
     priceMonthly: 249,
-    // 6835, pas 13800 : même méthode que Starter/Growth, hypothèses infra/support ~10€+20€/mois
-    // (sièges et support prioritaire supplémentaires, cf. `features.prioritySupport`).
+    // 6835, pas 13800 : même méthode que Starter/Growth, infra/support ~10€+20€/mois (sièges
+    // et support prioritaire supplémentaires, cf. `features.prioritySupport`) — VALIDÉ le
+    // 2026-08-13 (cf. commentaire Starter et README item 100).
     aiCreditsIncluded: 6835,
     maxSeats: 30,
     // 28, pas null (illimité) : corrigé le 2026-08-13 — ⌊6835 / 241⌋ = 28 campagnes de
