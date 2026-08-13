@@ -2,12 +2,15 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Card, Button, Field, ErrorText } from '@/components/ui';
+import { LanguageSwitcher } from '@/components/language-switcher';
 
 export default function LoginPage() {
   const router = useRouter();
+  const t = useTranslations('auth.login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -21,8 +24,11 @@ export default function LoginPage() {
       const { accessToken } = await api.login({ email, password });
       localStorage.setItem('accessToken', accessToken);
       router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.message ?? 'Échec de connexion');
+    } catch {
+      // Le backend renvoie un message d'erreur non traduit (logique d'authentification hors
+      // périmètre de cette internationalisation) — on affiche systématiquement le message
+      // traduit plutôt que de laisser fuiter du texte brut dans une UI en une autre langue.
+      setError(t('genericError'));
     } finally {
       setLoading(false);
     }
@@ -30,19 +36,22 @@ export default function LoginPage() {
 
   return (
     <main style={{ maxWidth: 400, margin: '80px auto', padding: '0 16px' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>Connexion à Campaign-ai</h1>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <LanguageSwitcher />
+      </div>
+      <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>{t('title')}</h1>
       <Card>
         <form onSubmit={handleSubmit}>
-          <Field label="Email" type="email" value={email} onChange={setEmail} required />
-          <Field label="Mot de passe" type="password" value={password} onChange={setPassword} required />
+          <Field label={t('email')} type="email" value={email} onChange={setEmail} required />
+          <Field label={t('password')} type="password" value={password} onChange={setPassword} required />
           <ErrorText message={error} />
           <Button type="submit" disabled={loading}>
-            {loading ? 'Connexion...' : 'Se connecter'}
+            {loading ? t('submitting') : t('submit')}
           </Button>
         </form>
       </Card>
       <p style={{ marginTop: 16, fontSize: 14, color: 'var(--text-secondary)' }}>
-        Pas encore de compte ? <Link href="/register">Créer un compte</Link>
+        {t('noAccount')} <Link href="/register">{t('createAccount')}</Link>
       </p>
     </main>
   );

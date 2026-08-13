@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiProvider, GenerateImageParams, AiGenerationResult } from './ai-provider.interface';
+import { fetchWithTimeout } from '../../../common/http/fetch-with-timeout';
 
 // Provider Flux : génération d'image via l'API Replicate, qui héberge le modèle Flux
 // (Black Forest Labs). Comme Veo, l'appel est asynchrone côté Replicate — on encapsule
@@ -9,7 +10,6 @@ import { AiProvider, GenerateImageParams, AiGenerationResult } from './ai-provid
 @Injectable()
 export class FluxProvider implements AiProvider {
   readonly name = 'flux';
-  private readonly logger = new Logger(FluxProvider.name);
   private readonly apiToken: string | undefined;
   private static readonly MODEL_VERSION = 'black-forest-labs/flux-1.1-pro';
 
@@ -20,7 +20,7 @@ export class FluxProvider implements AiProvider {
   async generateImage(params: GenerateImageParams): Promise<AiGenerationResult> {
     const start = Date.now();
 
-    const createRes = await fetch(`https://api.replicate.com/v1/models/${FluxProvider.MODEL_VERSION}/predictions`, {
+    const createRes = await fetchWithTimeout(`https://api.replicate.com/v1/models/${FluxProvider.MODEL_VERSION}/predictions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.apiToken}`,
@@ -64,7 +64,7 @@ export class FluxProvider implements AiProvider {
 
   private async pollUntilComplete(statusUrl: string, maxAttempts = 20): Promise<any> {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const res = await fetch(statusUrl, { headers: { Authorization: `Bearer ${this.apiToken}` } });
+      const res = await fetchWithTimeout(statusUrl, { headers: { Authorization: `Bearer ${this.apiToken}` } }, 15_000);
       const data = await res.json();
       if (data.status === 'succeeded') return data;
       if (data.status === 'failed' || data.status === 'canceled') {

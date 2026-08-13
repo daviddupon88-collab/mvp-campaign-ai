@@ -1,25 +1,33 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { api } from '@/lib/api';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { Nav } from '@/components/nav';
 import { Card } from '@/components/ui';
 import { PricingGrid } from '@/components/pricing-grid';
+import { INTL_TAGS, Locale } from '@/i18n/config';
 
 export default function BillingSettingsPage() {
   const ready = useRequireAuth();
+  const t = useTranslations('billing');
+  const tErrors = useTranslations('errors');
+  const locale = useLocale();
+  const intlTag = INTL_TAGS[locale as Locale] ?? 'en-US';
   const [plans, setPlans] = useState<any[]>([]);
   const [usage, setUsage] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ready) return;
-    Promise.all([api.listPlans(), api.getUsage()]).then(([p, u]) => {
-      setPlans(p);
-      setUsage(u);
-    });
-  }, [ready]);
+    Promise.all([api.listPlans(), api.getUsage()])
+      .then(([p, u]) => {
+        setPlans(p);
+        setUsage(u);
+      })
+      .catch((err: any) => setError(err.message ?? tErrors('generic')));
+  }, [ready, tErrors]);
 
   if (!ready) return null;
 
@@ -33,7 +41,7 @@ export default function BillingSettingsPage() {
       const { checkoutUrl } = await api.createCheckout({ plan: planKey, successUrl: returnUrl, cancelUrl: returnUrl });
       window.location.href = checkoutUrl;
     } catch (err: any) {
-      setError(err.message ?? 'Échec de la création de la session de paiement');
+      setError(err.message ?? t('checkoutError'));
     }
   }
 
@@ -45,12 +53,12 @@ export default function BillingSettingsPage() {
     <>
       <Nav />
       <main style={{ maxWidth: 900, margin: '40px auto', padding: '0 16px' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>Facturation</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>{t('title')}</h1>
 
         {usage && (
           <Card style={{ marginBottom: 24, maxWidth: 480 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Crédits IA utilisés ce mois</span>
+              <span style={{ color: 'var(--text-secondary)' }}>{t('creditsUsedThisMonth')}</span>
               <span className="mono">{credits?.used ?? 0} / {credits?.limit ?? 0}</span>
             </div>
             <div style={{ height: 6, background: 'var(--border)', borderRadius: 6, overflow: 'hidden' }}>
@@ -58,7 +66,7 @@ export default function BillingSettingsPage() {
             </div>
             {usage.subscription?.status === 'trialing' && usage.subscription?.trialEndsAt && (
               <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 12, marginBottom: 0 }}>
-                Essai gratuit — se termine le {new Date(usage.subscription.trialEndsAt).toLocaleDateString('fr-FR')}
+                {t('trialEndsOn', { date: new Date(usage.subscription.trialEndsAt).toLocaleDateString(intlTag) })}
               </p>
             )}
           </Card>
@@ -66,7 +74,7 @@ export default function BillingSettingsPage() {
 
         {error && <p style={{ color: 'var(--accent-danger)', fontSize: 13, marginBottom: 16 }}>{error}</p>}
 
-        <h2 style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>Changer de plan</h2>
+        <h2 style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>{t('changePlan')}</h2>
         <PricingGrid plans={plans} currentPlanKey={currentPlanKey} onSelectPlan={handleSelectPlan} />
       </main>
     </>

@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import {
   SocialAdapter,
   OAuthAuthorizeParams,
@@ -29,7 +30,6 @@ const API_BASE = `https://googleads.googleapis.com/${API_VERSION}`;
 @Injectable()
 export class GoogleAdsAdapter implements SocialAdapter {
   readonly platform = PLATFORM;
-  private readonly logger = new Logger(GoogleAdsAdapter.name);
   private readonly clientId: string;
   private readonly clientSecret: string;
   private readonly developerToken: string;
@@ -56,7 +56,7 @@ export class GoogleAdsAdapter implements SocialAdapter {
   }
 
   async exchangeCodeForToken({ code, redirectUri }: OAuthCallbackParams): Promise<OAuthTokenResult> {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
+    const res = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -85,7 +85,7 @@ export class GoogleAdsAdapter implements SocialAdapter {
   // Google Ads utilise le refresh_token OAuth2 standard — expiration de l'access_token
   // toujours 1h, refresh_token valide indéfiniment sauf révocation explicite.
   async refreshAccessToken(refreshToken: string): Promise<OAuthTokenResult> {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
+    const res = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -116,7 +116,7 @@ export class GoogleAdsAdapter implements SocialAdapter {
   }
 
   private async mutate(accessToken: string, customerId: string, path: string, body: unknown): Promise<any> {
-    const res = await fetch(`${API_BASE}/customers/${customerId}/${path}`, {
+    const res = await fetchWithTimeout(`${API_BASE}/customers/${customerId}/${path}`, {
       method: 'POST',
       headers: this.headers(accessToken),
       body: JSON.stringify(body),
@@ -194,7 +194,7 @@ export class GoogleAdsAdapter implements SocialAdapter {
 
     const query = `SELECT metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM ad_group_ad WHERE ad_group_ad.resource_name = '${externalPostId}'`;
 
-    const res = await fetch(`${API_BASE}/customers/${customerId}/googleAds:search`, {
+    const res = await fetchWithTimeout(`${API_BASE}/customers/${customerId}/googleAds:search`, {
       method: 'POST',
       headers: this.headers(accessToken),
       body: JSON.stringify({ query }),

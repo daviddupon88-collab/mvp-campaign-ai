@@ -1,11 +1,12 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestMeta } from '../common/decorators/request-meta.decorator';
 import { AuditService } from '../audit/audit.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, UpdateLanguageDto } from './dto/auth.dto';
 import { SwitchOrganizationDto } from './dto/switch-organization.dto';
 
 interface AuthUser {
@@ -26,6 +27,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly auditService: AuditService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Post('register')
@@ -64,8 +66,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() user: AuthUser) {
     const organizations = await this.authService.getMyOrganizations(user.userId);
+    // preferredLanguage n'est pas porté par le JWT (cf. buildAuthResponse) — lu à part pour
+    // ne pas invalider tous les tokens déjà émis en changeant la forme du payload signé.
+    const dbUser = await this.prisma.user.findUnique({ where: { id: user.userId }, select: { preferredLanguage: true } });
     return {
-      user: { id: user.userId, email: user.email, isPlatformAdmin: user.isPlatformAdmin },
+      user: { id: user.userId, email: user.email, isPlatformAdmin: user.isPlatformAdmin, preferredLanguage: dbUser?.preferredLanguage ?? 'en' },
       currentOrganizationId: user.organizationId,
       role: user.role, // rôle DANS l'organisation courante — cf. organizations[].role pour les autres
       organizations,
@@ -76,5 +81,13 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   switchOrganization(@CurrentUser() user: AuthUser, @Body() dto: SwitchOrganizationDto) {
     return this.authService.switchOrganization(user.userId, user.email, dto.organizationId);
+  }
+
+  // Préférence de langue de l'interface (i18n) — indépendante de la langue de génération
+  // d'une campagne, jamais lue par la logique métier.
+  @Patch('language')
+  @UseGuards(JwtAuthGuard)
+  updateLanguage(@CurrentUser() user: AuthUser, @Body() dto: UpdateLanguageDto) {
+    return this.authService.updateLanguage(user.userId, dto.preferredLanguage);
   }
 }

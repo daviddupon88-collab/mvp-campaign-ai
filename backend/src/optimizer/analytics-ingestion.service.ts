@@ -209,13 +209,27 @@ export class AnalyticsIngestionService {
     });
     if (allMetrics.length === 0) return null;
 
+    // Correction de l'audit : recordManualConversion() ne renseigne jamais `platform` (donc
+    // clé 'unknown' pour toutes) — avec la logique "la plus récente par plateforme" ci-dessous
+    // appliquée telle quelle, plusieurs conversions manuelles déclarées séparément pour la
+    // même campagne s'écrasaient les unes les autres et seule la dernière comptait dans le
+    // ROAS/CPA agrégé. Distinction nécessaire : une ligne PAR PLATEFORME (sync depuis l'API
+    // d'un réseau réel) est un SNAPSHOT cumulatif à un instant donné — seule la plus récente
+    // doit compter, la sommer avec les précédentes doublerait les totaux déjà cumulés côté
+    // plateforme. Une ligne SANS plateforme (déclaration manuelle) est au contraire un
+    // ÉVÉNEMENT ADDITIF discret (une déclaration = une conversion de plus) — toutes doivent
+    // être sommées, jamais réduites à la seule plus récente.
+    const platformMetrics = allMetrics.filter((m) => m.platform);
+    const manualMetrics = allMetrics.filter((m) => !m.platform);
+
     const latestByPlatform = new Map<string, (typeof allMetrics)[number]>();
-    for (const m of allMetrics) {
-      const key = m.platform ?? 'unknown';
-      if (!latestByPlatform.has(key)) latestByPlatform.set(key, m);
+    for (const m of platformMetrics) {
+      if (!latestByPlatform.has(m.platform!)) latestByPlatform.set(m.platform!, m);
     }
 
-    const totals = Array.from(latestByPlatform.values()).reduce(
+    const rowsToSum = [...latestByPlatform.values(), ...manualMetrics];
+
+    const totals = rowsToSum.reduce(
       (acc, m) => ({
         impressions: acc.impressions + (m.impressions ?? 0),
         clicks: acc.clicks + (m.clicks ?? 0),

@@ -1,0 +1,62 @@
+{
+  "title": "Abrechnung",
+  "creditsUsedThisMonth": "Diesen Monat genutzte KI-Credits",
+  "trialEndsOn": "Kostenlose Testphase — endet am {date}",
+  "changePlan": "Tarif wechseln",
+  "checkoutError": "Zahlungssitzung konnte nicht erstellt werden",
+  "pricingTitle": "Preise",
+  "pricingSubtitle": "14 Tage kostenlos testen bei allen Tarifen — keine Kreditkarte zum Start erforderlich.",
+  "landingPricingTitle": "Ein Tarif für jede Phase",
+  "plan": {
+    "loading": "Preise werden geladen...",
+    "popular": "Beliebt",
+    "perMonth": "/Monat",
+    "customQuote": "Individuelles Angebot",
+    "creditsPerMonth": "{count} KI-Credits/Monat",
+    "unlimitedSeats": "Unbegrenzte Plätze",
+    "seats": "{count} Plätze",
+    "unlimitedCampaigns": "Unbegrenzte Kampagnen",
+    "activeCampaigns": "{count} aktive Kampagnen",
+    "unlimitedChannels": "Unbegrenzte Kanäle",
+    "channelsPerCampaign": "{count} Kanäle pro Kampagne",
+    "currentPlan": "Aktueller Tarif",
+    "choosePlan": "{name} wählen",
+    "selectPlan": "Diesen Tarif wählen",
+    "contactUs": "Kontaktieren Sie uns"
+  },
+  "trialBanner": {
+    "endsInDays": "{count, plural, one {Ihre kostenlose Testphase endet in # Tag.} other {Ihre kostenlose Testphase endet in # Tagen.}}",
+    "endsToday": "Ihre kostenlose Testphase endet heute.",
+    "choosePlan": "Tarif wählen"
+  },
+  "quota": {
+    "title": "Ihre Tarifnutzung",
+    "seats": "Plätze",
+    "activeCampaigns": "Aktive Kampagnen",
+    "aiCredits": "KI-Credits",
+    "images": "KI-Bilder",
+    "videos": "KI-Videos",
+    "socialPosts": "Veröffentlichungen",
+    "optimizerRuns": "Optimizer-Analysen",
+    "extraCredits": "Gekaufte Paket-Credits (werden zuerst verbraucht)"
+  },
+  "upgrade": {
+    "limitReached": "Limit erreicht",
+    "thisLimit": "dieses Limit",
+    "youUsed": "Sie haben {limit} genutzt",
+    "withRecommendation": "Wechseln Sie zum Tarif {plan}, um ohne Unterbrechung fortzufahren.",
+    "withoutRecommendation": "Wechseln Sie zu einem höheren Tarif, um ohne Unterbrechung fortzufahren.",
+    "seePlans": "Tarife ansehen",
+    "later": "Später",
+    "limitLabels": {
+      "credits": "Ihre KI-Credits",
+      "seats": "Ihre Plätze",
+      "activeCampaigns": "Ihre aktiven Kampagnen",
+      "channels": "Ihre gleichzeitigen Kanäle",
+      "images": "Ihre KI-Bilder",
+      "videos": "Ihre KI-Videos",
+      "socialPosts": "Ihre Veröffentlichungen",
+      "optimizerRuns": "Ihre Optimizer-Analysen"
+    }
+  }
+}

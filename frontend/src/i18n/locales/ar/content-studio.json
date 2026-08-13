@@ -1,0 +1,17 @@
+{
+  "videoUnsupported": "متصفحك لا يدعم تشغيل الفيديو.",
+  "imageAlt": "صورة تم إنشاؤها لـ {channel}",
+  "empty": "لم يتم إنشاء أي محتوى بعد — يمتلئ استوديو المحتوى تلقائيًا بمجرد أن ينتج التنسيق بالذكاء الاصطناعي نتيجة.",
+  "saveNewVersion": "حفظ (نسخة جديدة)",
+  "createVariation": "إنشاء نسخة بديلة",
+  "schedule": "جدولة",
+  "confirm": "تأكيد",
+  "connectedChannel": "القناة المتصلة",
+  "selectPlaceholder": "اختر...",
+  "dateAndTime": "التاريخ والوقت",
+  "versions": "الإصدارات",
+  "variationLabel": "النسخة البديلة {label}",
+  "versionLabel": "الإصدار {number}",
+  "current": "الحالي",
+  "useThisVersion": "استخدام هذا الإصدار"
+}

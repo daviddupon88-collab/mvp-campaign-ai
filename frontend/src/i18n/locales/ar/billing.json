@@ -1,0 +1,62 @@
+{
+  "title": "الفوترة",
+  "creditsUsedThisMonth": "أرصدة الذكاء الاصطناعي المستخدمة هذا الشهر",
+  "trialEndsOn": "تجربة مجانية — تنتهي في {date}",
+  "changePlan": "تغيير الخطة",
+  "checkoutError": "فشل إنشاء جلسة الدفع",
+  "pricingTitle": "الأسعار",
+  "pricingSubtitle": "تجربة مجانية لمدة 14 يومًا على جميع الخطط — لا حاجة إلى بطاقة ائتمان للبدء.",
+  "landingPricingTitle": "خطة لكل مرحلة",
+  "plan": {
+    "loading": "جارٍ تحميل الأسعار...",
+    "popular": "الأكثر شيوعًا",
+    "perMonth": "/شهريًا",
+    "customQuote": "عرض سعر مخصص",
+    "creditsPerMonth": "{count} رصيد ذكاء اصطناعي/شهريًا",
+    "unlimitedSeats": "مقاعد غير محدودة",
+    "seats": "{count} مقاعد",
+    "unlimitedCampaigns": "حملات غير محدودة",
+    "activeCampaigns": "{count} حملات نشطة",
+    "unlimitedChannels": "قنوات غير محدودة",
+    "channelsPerCampaign": "{count} قنوات لكل حملة",
+    "currentPlan": "الخطة الحالية",
+    "choosePlan": "اختيار {name}",
+    "selectPlan": "اختيار هذه الخطة",
+    "contactUs": "تواصل معنا"
+  },
+  "trialBanner": {
+    "endsInDays": "{count, plural, one {تنتهي تجربتك المجانية خلال يوم واحد.} other {تنتهي تجربتك المجانية خلال # أيام.}}",
+    "endsToday": "تنتهي تجربتك المجانية اليوم.",
+    "choosePlan": "اختيار خطة"
+  },
+  "quota": {
+    "title": "استخدامك لهذه الخطة",
+    "seats": "المقاعد",
+    "activeCampaigns": "الحملات النشطة",
+    "aiCredits": "أرصدة الذكاء الاصطناعي",
+    "images": "صور الذكاء الاصطناعي",
+    "videos": "فيديوهات الذكاء الاصطناعي",
+    "socialPosts": "المنشورات",
+    "optimizerRuns": "تحليلات Optimizer",
+    "extraCredits": "أرصدة الحزمة المشتراة (تُستهلك أولاً)"
+  },
+  "upgrade": {
+    "limitReached": "تم بلوغ الحد الأقصى",
+    "thisLimit": "هذا الحد",
+    "youUsed": "لقد استخدمت {limit}",
+    "withRecommendation": "انتقل إلى خطة {plan} للمتابعة دون انقطاع.",
+    "withoutRecommendation": "قم بالترقية إلى خطة أعلى للمتابعة دون انقطاع.",
+    "seePlans": "عرض الخطط",
+    "later": "لاحقًا",
+    "limitLabels": {
+      "credits": "أرصدة الذكاء الاصطناعي الخاصة بك",
+      "seats": "مقاعدك",
+      "activeCampaigns": "حملاتك النشطة",
+      "channels": "قنواتك المتزامنة",
+      "images": "صور الذكاء الاصطناعي الخاصة بك",
+      "videos": "فيديوهات الذكاء الاصطناعي الخاصة بك",
+      "socialPosts": "منشوراتك",
+      "optimizerRuns": "تحليلات Optimizer الخاصة بك"
+    }
+  }
+}

@@ -8,6 +8,7 @@ import {
   ModerateTextResult,
   AiGenerationResult,
 } from './ai-provider.interface';
+import { fetchWithTimeout } from '../../../common/http/fetch-with-timeout';
 
 // Provider OpenAI : implémentation de référence pour brancher un vrai fournisseur.
 // Nécessite OPENAI_API_KEY dans l'environnement.
@@ -24,7 +25,7 @@ export class OpenAiProvider implements AiProvider {
     const start = Date.now();
     const model = 'gpt-5';
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -56,7 +57,7 @@ export class OpenAiProvider implements AiProvider {
     const start = Date.now();
     const model = 'gpt-image-1';
 
-    const response = await fetch('https://api.openai.com/v1/images/generations', {
+    const response = await fetchWithTimeout('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -93,7 +94,7 @@ export class OpenAiProvider implements AiProvider {
     const start = Date.now();
     const model = 'gpt-5';
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -133,7 +134,7 @@ export class OpenAiProvider implements AiProvider {
   // Modération de sécurité : endpoint dédié, non facturé par tokens chez OpenAI (coût=0),
   // mais tout de même journalisé pour le volume d'appels et la fiabilité du fournisseur.
   async moderateText(text: string): Promise<ModerateTextResult> {
-    const response = await fetch('https://api.openai.com/v1/moderations', {
+    const response = await fetchWithTimeout('https://api.openai.com/v1/moderations', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

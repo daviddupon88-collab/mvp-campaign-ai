@@ -33,7 +33,7 @@ export class AutomationService {
   // Point d'entrée qui sera appelé une fois la phase activée — aujourd'hui, refuse
   // systématiquement, pour qu'aucun appel ne puisse accidentellement déclencher une action
   // réelle avant que cette fonctionnalité soit délibérément construite et testée.
-  async executeAutomatically(recommendationId: string): Promise<never> {
+  async executeAutomatically(_recommendationId: string): Promise<never> {
     if (!this.isEnabled()) {
       throw new ForbiddenException(
         "L'automatisation contrôlée n'est pas encore activée sur cette instance (ENABLE_CONTROLLED_AUTOMATION=false). " +

@@ -1,6 +1,7 @@
 import { AiOrchestratorService } from './ai-orchestrator.service';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { BrandContextBuilderService } from '../../brand/brand-context-builder.service';
+import { PlanLimitExceededException } from '../../plans/plan-limit.exception';
 
 function buildBrandContextMock(text = '') {
   const build = jest.fn().mockResolvedValue({ text, rules: [], entriesUsed: [] });
@@ -274,5 +275,62 @@ describe('AiOrchestratorService — intégration du contexte de marque (Lot D)',
     await service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'], templateHints: { personaArchetype: 'Responsable marketing PME' } });
 
     expect(contextWithBrand.build).toHaveBeenCalledWith(expect.objectContaining({ persona: 'Responsable marketing PME' }));
+  });
+});
+
+// Correction de l'audit du 2026-08-13 : rendre la vidéo obligatoire pour chaque campagne
+// (item 63 du README) entre en conflit avec le plafond dédié `maxVideos` de l'essai gratuit
+// (1 vidéo au total) — sans ce garde-fou, la 2e/3e campagne d'un essai échouerait
+// systématiquement (statut FAILED) au lieu de simplement ne pas avoir de vidéo (cf. item 75).
+describe('AiOrchestratorService — dégradation propre quand le quota vidéo dédié est atteint', () => {
+  function buildGatewayWithVideoError(error: unknown) {
+    const gateway = buildGatewayMock();
+    (gateway.generateVideo as jest.Mock).mockRejectedValue(error);
+    return gateway;
+  }
+
+  it('termine la campagne sans vidéo (video: null) quand generateVideo lève un PlanLimitExceededException de type "videos"', async () => {
+    const quotaError = new PlanLimitExceededException({
+      message: 'Quota de vidéos de l\'essai atteint (1/1)',
+      code: 'PLAN_LIMIT_EXCEEDED',
+      limitType: 'videos',
+      currentPlan: 'trial',
+      current: 1,
+      limit: 1,
+      recommendedPlan: 'growth',
+    });
+    const gateway = buildGatewayWithVideoError(quotaError);
+    const service = new AiOrchestratorService(gateway, brandContext);
+
+    const result = await service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] });
+
+    expect(result.video).toBeNull();
+    // Le reste de la campagne (texte, image) doit rester intact — seule la vidéo est omise.
+    expect(result.channelContent.instagram.content).toBeTruthy();
+    expect(result.visual.content).toBeTruthy();
+  });
+
+  it('ne dégrade PAS pour un autre type de plafond (ex: crédits épuisés) — l\'erreur remonte normalement', async () => {
+    const creditsError = new PlanLimitExceededException({
+      message: 'Quota de crédits IA atteint',
+      code: 'PLAN_LIMIT_EXCEEDED',
+      limitType: 'credits',
+      currentPlan: 'trial',
+      current: 300,
+      limit: 300,
+      recommendedPlan: 'growth',
+    });
+    const gateway = buildGatewayWithVideoError(creditsError);
+    const service = new AiOrchestratorService(gateway, brandContext);
+
+    await expect(service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] })).rejects.toBe(creditsError);
+  });
+
+  it('ne dégrade PAS pour une panne technique réelle (fournisseur vidéo indisponible) — jamais de repli silencieux', async () => {
+    const providerError = new Error('Google Veo indisponible (500)');
+    const gateway = buildGatewayWithVideoError(providerError);
+    const service = new AiOrchestratorService(gateway, brandContext);
+
+    await expect(service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] })).rejects.toBe(providerError);
   });
 });

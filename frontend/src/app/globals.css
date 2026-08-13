@@ -80,3 +80,16 @@ textarea::placeholder {
   background: var(--border-strong);
   border-radius: 20px;
 }
+
+/* RTL (arabe) — le reste de la mise en page (flex, grid) suit nativement `dir` via l'axe
+   inline du CSS ; ces règles ne couvrent que ce qui ne se déduit pas automatiquement. */
+[dir='rtl'] {
+  text-align: start;
+}
+
+[dir='rtl'] body,
+[dir='rtl'] h1,
+[dir='rtl'] h2,
+[dir='rtl'] h3 {
+  font-family: var(--font-arabic), var(--font-inter), sans-serif;
+}

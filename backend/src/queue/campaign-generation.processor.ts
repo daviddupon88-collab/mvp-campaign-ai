@@ -39,6 +39,31 @@ export class CampaignGenerationProcessor extends WorkerHost {
   }
 
   async process(job: Job<GenerateCampaignParams>) {
+    try {
+      return await this.processInternal(job);
+    } catch (error) {
+      const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+      if (!isLastAttempt) {
+        // Tentatives BullMQ restantes : on relance l'exception telle quelle pour que le
+        // worker programme un retry (cf. attempts/backoff sur la queue) — la campagne reste
+        // IN_PROGRESS, aucune mise à jour ici.
+        this.logger.warn(`Job ${job.id} (campagne ${job.data.campaignId}) en échec, nouvelle tentative programmée : ${error}`);
+        throw error;
+      }
+
+      // Dernière tentative épuisée : avant cette correction, l'exception remontait ici sans
+      // jamais mettre à jour la campagne, qui restait bloquée IN_PROGRESS indéfiniment, sans
+      // notification ni moyen de le représenter (aucun état FAILED n'existait). On absorbe
+      // l'exception (pas de re-throw) pour éviter un log dupliqué par BullMQ, et on informe
+      // explicitement l'utilisateur plutôt que de le laisser face à un état muet.
+      const failureReason = this.toUserFacingFailureReason(error);
+      this.logger.error(`Job ${job.id} (campagne ${job.data.campaignId}) définitivement en échec : ${error}`);
+      await this.markCampaignFailed(job.data.organizationId, job.data.campaignId, failureReason);
+      return { campaignStatus: 'FAILED', failureReason };
+    }
+  }
+
+  private async processInternal(job: Job<GenerateCampaignParams>) {
     const { organizationId, campaignId } = job.data;
     this.logger.log(`Traitement du job ${job.id} — campagne ${campaignId}`);
 
@@ -103,6 +128,41 @@ export class CampaignGenerationProcessor extends WorkerHost {
     });
 
     return { ...results, moderationResult, brandResult, campaignStatus: 'READY_FOR_REVIEW' };
+  }
+
+  private async markCampaignFailed(organizationId: string, campaignId: string, failureReason: string) {
+    const campaign = await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { status: 'FAILED', failureReason },
+    });
+
+    // Mêmes destinataires que "prête pour validation" — un échec définitif mérite la même
+    // visibilité immédiate qu'une réussite, pas seulement un statut muet dans la liste.
+    await this.notifications.notifyOrganization(organizationId, ['MARKETING_MANAGER', 'ADMIN', 'OWNER'], {
+      organizationId,
+      type: 'CAMPAIGN_GENERATION_FAILED',
+      title: 'Échec de génération de campagne',
+      body: `La génération de la campagne "${campaign.name}" a échoué : ${failureReason}`,
+      link: `/campaigns/${campaignId}`,
+    });
+  }
+
+  // Ne jamais exposer une trace d'erreur technique brute (stack, message de driver DB,
+  // détail de provider IA) à l'utilisateur final — seuls les cas métier reconnus reçoivent un
+  // message clair et actionnable ; tout le reste retombe sur un message générique, la trace
+  // complète restant dans les logs serveur (this.logger.error ci-dessus) pour investigation.
+  private toUserFacingFailureReason(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/crédits IA|credits/i.test(message)) {
+      return 'Crédits IA insuffisants pour terminer cette génération.';
+    }
+    if (/plafond budgétaire|budget/i.test(message)) {
+      return 'Plafond budgétaire IA atteint pour cette période.';
+    }
+    if (/abonnement|subscription/i.test(message)) {
+      return "Abonnement inactif — impossible de terminer la génération.";
+    }
+    return "La génération a échoué suite à une erreur technique. Réessayez, ou contactez le support si le problème persiste.";
   }
 
   // Transforme le résultat transitoire de l'AI Orchestrator en pièces de contenu durables :

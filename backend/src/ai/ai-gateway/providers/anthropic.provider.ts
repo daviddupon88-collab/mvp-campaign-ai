@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiProvider, GenerateTextParams, AiGenerationResult } from './ai-provider.interface';
+import { fetchWithTimeout } from '../../../common/http/fetch-with-timeout';
 
 // Provider Anthropic : utilisé notamment pour l'analyse stratégique / SEO
 // (cf. exemple d'orchestration du chapitre 9 du business plan).
@@ -18,7 +19,7 @@ export class AnthropicProvider implements AiProvider {
     const start = Date.now();
     const model = 'claude-sonnet-5';
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

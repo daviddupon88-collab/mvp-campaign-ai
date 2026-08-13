@@ -15,7 +15,7 @@ function buildService(target: any, candidates: any[], existingContradiction: any
   } as unknown as PrismaService;
 
   const service = new ContradictionService(prisma);
-  return { service, createContradiction, updateManyEntries, findFirstContradiction };
+  return { service, createContradiction, updateManyEntries, findFirstContradiction, findManyEntries };
 }
 
 const base = { channel: null, persona: null, contentType: null, evidenceCount: 3, confidenceScore: 0.5 };
@@ -31,6 +31,19 @@ describe('ContradictionService.scanForContradictions', () => {
     expect(result).toHaveLength(1);
     expect(createContradiction.mock.calls[0][0].data.resolutionStatus).toBe('UNRESOLVED');
     expect(updateManyEntries).toHaveBeenCalledWith({ where: { id: { in: ['a', 'b'] } }, data: { status: 'CONTRADICTED' } });
+  });
+
+  // Correction de l'audit : sans ordre explicite, la fenêtre des MAX_CANDIDATES_PER_SCAN
+  // candidats n'était pas reproductible — certaines paires pouvaient ne jamais être comparées.
+  it('interroge les candidats avec un ordre explicite et déterministe', async () => {
+    const target = { ...base, id: 'a', content: 'Les vidéos courtes fonctionnent mieux.' };
+    const { service, findManyEntries } = buildService(target, []);
+
+    await service.scanForContradictions('org-1', 'a', 'CREATIVE');
+
+    expect(findManyEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { lastObservedAt: 'desc' } }),
+    );
   });
 
   it("marque CONTEXT_DEPENDENT (sans toucher au statut des entrées) quand le canal diffère — exemple TikTok/YouTube de la Phase 9", async () => {

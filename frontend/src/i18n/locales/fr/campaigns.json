@@ -1,0 +1,96 @@
+{
+  "title": "Campagnes",
+  "newCampaign": "Nouvelle campagne",
+  "list": {
+    "empty": "Aucune campagne pour le moment."
+  },
+  "new": {
+    "title": "Nouvelle campagne",
+    "templateIntro": "Un template guide la génération (objectif, ton, angle) sans rien figer — vous pourrez tout ajuster à l'étape suivante.",
+    "blankTemplate": "Partir d'une page blanche, sans template",
+    "changeTemplate": "← Changer de template",
+    "nameLabel": "Nom de la campagne",
+    "photoLabel": "Photo du produit — une photo suffit : l'IA détecte catégorie, prix, forces et USP automatiquement",
+    "photoPreviewAlt": "Aperçu de la photo produit",
+    "photoDropzoneTitle": "Glissez une photo ou cliquez pour téléverser",
+    "photoDropzoneHint": "JPG, PNG — optionnel si une description est fournie ci-dessous",
+    "photoUploading": "Envoi en cours...",
+    "photoUploaded": "Photo envoyée",
+    "removePhoto": "Retirer",
+    "photoUploadError": "Échec de l'envoi de la photo",
+    "descriptionLabel": "Description du produit (optionnelle si une photo est fournie)",
+    "descriptionPlaceholder": "Ex: application mobile de fitness avec coaching IA personnalisé",
+    "objectiveLabel": "Objectif",
+    "objectivePlaceholder": "Ex: générer 500 leads qualifiés en 30 jours",
+    "budgetLabel": "Budget (optionnel)",
+    "channelsLabel": "Canaux — chacun reçoit un contenu généré spécifiquement pour lui, pas un texte partagé",
+    "channelsGroupLabel": "Canaux",
+    "noChannelSelected": "Aucun canal sélectionné : un contenu générique unique sera généré.",
+    "missingPhotoOrDescription": "Ajoutez une photo du produit ou décrivez-le — au moins l'un des deux est nécessaire.",
+    "launching": "Lancement...",
+    "uploadingPhoto": "Envoi de la photo...",
+    "generate": "Générer la campagne",
+    "genericError": "Échec de la création"
+  },
+  "detail": {
+    "productPhotoAlt": "Photo du produit",
+    "generating": "L'orchestration IA est en cours (analyse → stratégie → copywriting → visuel)... Cette page se rafraîchit automatiquement.",
+    "tabs": {
+      "overview": "Vue d'ensemble",
+      "content": "Contenu",
+      "analytics": "Analytics",
+      "optimizer": "Optimisation"
+    },
+    "generations": {
+      "title": "Générations IA",
+      "empty": "Aucune génération pour le moment.",
+      "status": {
+        "PENDING": "En attente",
+        "RUNNING": "En cours",
+        "SUCCEEDED": "Terminé",
+        "FAILED": "Échec"
+      }
+    },
+    "review": {
+      "title": "Validation avant publication",
+      "brandConsistency": "Cohérence de marque :",
+      "approved": "Approuvée ✓",
+      "approve": "Approuver",
+      "reject": "Rejeter",
+      "rejectPrompt": "Motif du rejet (5 caractères minimum) :",
+      "roleRestricted": "Réservé au rôle Marketing Manager et au-dessus."
+    },
+    "rejected": {
+      "title": "Campagne rejetée"
+    },
+    "failed": {
+      "title": "Échec de la génération"
+    },
+    "retry": {
+      "button": "Réessayer"
+    },
+    "publish": {
+      "title": "Publication",
+      "empty": "Aucun réseau social connecté pour le moment.",
+      "publish": "Publier",
+      "publishing": "Publication..."
+    }
+  },
+  "optimizer": {
+    "runNow": "Lancer une analyse maintenant",
+    "running": "Analyse en cours...",
+    "empty": "Aucune recommandation pour le moment.",
+    "onlyPublished": "L'Optimizer analyse les campagnes publiées — revenez ici une fois cette campagne diffusée.",
+    "apply": "Appliquer",
+    "dismiss": "Écarter"
+  },
+  "calendar": {
+    "empty": "Aucune publication planifiée ce mois-ci. La planification se fait depuis l'onglet \"Contenu\" d'une campagne.",
+    "previous": "← Précédent",
+    "next": "Suivant →",
+    "reschedule": "Replanifier",
+    "reschedulePrompt": "Nouvelle date et heure (AAAA-MM-JJTHH:MM) :",
+    "cancel": "Annuler",
+    "cancelConfirm": "Annuler cette publication planifiée ?"
+  }
+}

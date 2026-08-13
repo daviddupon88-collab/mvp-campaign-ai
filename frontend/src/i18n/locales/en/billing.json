@@ -1,0 +1,62 @@
+{
+  "title": "Billing",
+  "creditsUsedThisMonth": "AI credits used this month",
+  "trialEndsOn": "Free trial — ends on {date}",
+  "changePlan": "Change plan",
+  "checkoutError": "Failed to create the payment session",
+  "pricingTitle": "Pricing",
+  "pricingSubtitle": "14-day free trial on all plans — no credit card required to get started.",
+  "landingPricingTitle": "A plan for every stage",
+  "plan": {
+    "loading": "Loading pricing...",
+    "popular": "Popular",
+    "perMonth": "/month",
+    "customQuote": "Custom quote",
+    "creditsPerMonth": "{count} AI credits/month",
+    "unlimitedSeats": "Unlimited seats",
+    "seats": "{count} seats",
+    "unlimitedCampaigns": "Unlimited campaigns",
+    "activeCampaigns": "{count} active campaigns",
+    "unlimitedChannels": "Unlimited channels",
+    "channelsPerCampaign": "{count} channels per campaign",
+    "currentPlan": "Current plan",
+    "choosePlan": "Choose {name}",
+    "selectPlan": "Choose this plan",
+    "contactUs": "Contact us"
+  },
+  "trialBanner": {
+    "endsInDays": "{count, plural, one {Your free trial ends in # day.} other {Your free trial ends in # days.}}",
+    "endsToday": "Your free trial ends today.",
+    "choosePlan": "Choose a plan"
+  },
+  "quota": {
+    "title": "Your plan usage",
+    "seats": "Seats",
+    "activeCampaigns": "Active campaigns",
+    "aiCredits": "AI credits",
+    "images": "AI images",
+    "videos": "AI videos",
+    "socialPosts": "Publications",
+    "optimizerRuns": "Optimizer analyses",
+    "extraCredits": "Purchased pack credits (consumed first)"
+  },
+  "upgrade": {
+    "limitReached": "Limit reached",
+    "thisLimit": "this limit",
+    "youUsed": "You've used {limit}",
+    "withRecommendation": "Switch to the {plan} plan to continue without interruption.",
+    "withoutRecommendation": "Upgrade to a higher plan to continue without interruption.",
+    "seePlans": "See plans",
+    "later": "Later",
+    "limitLabels": {
+      "credits": "your AI credits",
+      "seats": "your seats",
+      "activeCampaigns": "your active campaigns",
+      "channels": "your simultaneous channels",
+      "images": "your AI images",
+      "videos": "your AI videos",
+      "socialPosts": "your publications",
+      "optimizerRuns": "your Optimizer analyses"
+    }
+  }
+}

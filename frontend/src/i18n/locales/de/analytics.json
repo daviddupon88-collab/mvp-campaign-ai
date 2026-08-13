@@ -1,0 +1,20 @@
+{
+  "overview": "Übersicht",
+  "impressions": "Impressionen",
+  "ctr": "CTR",
+  "cpa": "CPA",
+  "roas": "ROAS",
+  "roasUnavailable": "Nicht berechenbar",
+  "roasHint": "ROAS ist ohne erfassten Conversion-Wert nicht berechenbar (siehe Formular unten).",
+  "byChannel": "Nach Kanal",
+  "byCreative": "Nach Creative",
+  "byCreativeHint": "Welche Variante tatsächlich gewonnen hat.",
+  "noData": "Noch keine Daten.",
+  "onlyPublished": "Statistiken sind erst nach der Veröffentlichung der Kampagne verfügbar.",
+  "recordConversion": "Conversion erfassen",
+  "recordConversionHint": "Kein Adapter meldet Conversions automatisch — Promo-Code, UTM oder manuelle Angabe.",
+  "count": "Anzahl",
+  "totalValue": "Gesamtwert (€)",
+  "recording": "Wird erfasst...",
+  "record": "Erfassen"
+}

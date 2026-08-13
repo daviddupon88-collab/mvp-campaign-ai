@@ -6,7 +6,7 @@ import { BrandRuleGuardService } from '../brand/brand-rule-guard.service';
 
 function buildService(piece: any, overrides?: { ruleViolations?: any[] }) {
   const contentPieceFindFirst = jest.fn().mockResolvedValue(piece);
-  const contentVersionCreate = jest.fn().mockResolvedValue({ id: 'version-2' });
+  const contentVersionCreate = jest.fn().mockImplementation((args: any) => Promise.resolve({ id: 'version-2', ...args.data }));
   const contentPieceUpdate = jest.fn().mockResolvedValue({ id: piece.id });
 
   const prisma = {
@@ -142,5 +142,69 @@ describe('ContentStudioService.editContent — capture Brand Brain des éditions
 
     await expect(service.editContent('org-1', 'piece-1', { body: 'Découvrez notre solution.' })).resolves.toBeDefined();
     expect(contentVersionCreate).toHaveBeenCalled();
+  });
+});
+
+// Correction de l'audit : createVariations() ne passait par AUCUNE des vérifications
+// appliquées à editContent() — une variation pouvait dépasser les limites Google Ads ou
+// contenir un terme de marque interdit, puis être promue version courante sans jamais avoir
+// été bloquée. Ces tests vérifient que createVariations applique désormais les mêmes règles.
+describe('ContentStudioService.createVariations — mêmes garde-fous qu\'editContent', () => {
+  it('rejette une variation qui dépasse les limites Google Ads, sans créer AUCUNE variation du lot', async () => {
+    const { service, contentVersionCreate } = buildService(basePiece);
+    const oversizedBody = 'Titres (30 caractères max) :\n1. ' + 'x'.repeat(35) + '\n\nDescriptions (90 caractères max) :\n1. ok';
+
+    await expect(
+      service.createVariations('org-1', 'piece-1', [
+        { label: 'A', body: 'Titres (30 caractères max) :\n1. Titre correct\n\nDescriptions (90 caractères max) :\n1. Description correcte.' },
+        { label: 'B', body: oversizedBody },
+      ]),
+    ).rejects.toThrow(BadRequestException);
+    expect(contentVersionCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejette une variation contenant un terme de marque explicitement interdit', async () => {
+    const { service, contentVersionCreate } = buildService(basePiece, {
+      ruleViolations: [{ ruleId: 'rule-1', ruleContent: 'Ne jamais promettre un résultat garanti', matchedTerm: 'garanti' }],
+    });
+
+    await expect(
+      service.createVariations('org-1', 'piece-1', [{ label: 'A', body: 'Résultat garanti sous 30 jours.' }]),
+    ).rejects.toThrow(BadRequestException);
+    expect(contentVersionCreate).not.toHaveBeenCalled();
+  });
+
+  it('accepte un lot de variations qui respectent toutes les règles', async () => {
+    const { service, contentVersionCreate } = buildService(basePiece, { ruleViolations: [] });
+
+    await service.createVariations('org-1', 'piece-1', [
+      { label: 'A', body: 'Titres (30 caractères max) :\n1. Titre A\n\nDescriptions (90 caractères max) :\n1. Description A.' },
+      { label: 'B', body: 'Titres (30 caractères max) :\n1. Titre B\n\nDescriptions (90 caractères max) :\n1. Description B.' },
+    ]);
+
+    expect(contentVersionCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejette toute édition ou variation textuelle sur une pièce de type VIDEO', async () => {
+    const videoPiece = { ...basePiece, type: 'VIDEO', channel: 'tiktok' };
+    const { service: editService, contentVersionCreate: editCreate } = buildService(videoPiece);
+    const { service: variationService, contentVersionCreate: variationCreate } = buildService(videoPiece);
+
+    await expect(editService.editContent('org-1', 'piece-1', { body: 'texte arbitraire' })).rejects.toThrow(BadRequestException);
+    expect(editCreate).not.toHaveBeenCalled();
+
+    await expect(variationService.createVariations('org-1', 'piece-1', [{ label: 'A', body: 'texte arbitraire' }])).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(variationCreate).not.toHaveBeenCalled();
+  });
+
+  it('une variation sans body (asset seul) ne déclenche aucune validation de texte', async () => {
+    const { service, contentVersionCreate, checkText } = buildService(basePiece, { ruleViolations: [] });
+
+    await service.createVariations('org-1', 'piece-1', [{ label: 'A', assetId: 'asset-1' }]);
+
+    expect(checkText).not.toHaveBeenCalled();
+    expect(contentVersionCreate).toHaveBeenCalledTimes(1);
   });
 });

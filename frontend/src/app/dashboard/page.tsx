@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { api } from '@/lib/api';
 import { Nav } from '@/components/nav';
@@ -11,6 +12,8 @@ import { QuotaUsage } from '@/components/quota-usage';
 
 export default function DashboardPage() {
   const ready = useRequireAuth();
+  const t = useTranslations('dashboard');
+  const tCommon = useTranslations('common');
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -31,18 +34,18 @@ export default function DashboardPage() {
         <TrialBanner />
         <QuotaUsage />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 500 }}>Tableau de bord</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 500 }}>{t('title')}</h1>
           <Link href="/campaigns/new">
-            <Button>Nouvelle campagne</Button>
+            <Button>{t('newCampaign')}</Button>
           </Link>
         </div>
 
         <Card>
-          <h2 style={{ fontSize: 16, fontWeight: 500, marginTop: 0 }}>Campagnes récentes</h2>
-          {loading && <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Chargement...</p>}
+          <h2 style={{ fontSize: 16, fontWeight: 500, marginTop: 0 }}>{t('recentCampaigns')}</h2>
+          {loading && <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>{tCommon('status.loading')}</p>}
           {!loading && campaigns.length === 0 && (
             <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
-              Aucune campagne pour le moment. Créez-en une pour lancer l'orchestration IA.
+              {t('noCampaigns')}
             </p>
           )}
           {campaigns.map((c) => (
@@ -58,7 +61,9 @@ export default function DashboardPage() {
               }}
             >
               <strong style={{ fontSize: 14 }}>{c.name}</strong>
-              <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--text-secondary)' }}>{c.status}</span>
+              <span style={{ marginInlineStart: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                {tCommon.has(`statusLabels.${c.status}`) ? tCommon(`statusLabels.${c.status}` as any) : c.status}
+              </span>
             </Link>
           ))}
         </Card>

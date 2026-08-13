@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiProvider, GenerateImageParams, AiGenerationResult } from './ai-provider.interface';
+import { fetchWithTimeout } from '../../../common/http/fetch-with-timeout';
 
 // Provider Ideogram : particulièrement adapté aux visuels publicitaires qui intègrent
 // du texte lisible (bannières, affiches, miniatures) — un point faible connu des autres
@@ -18,7 +19,7 @@ export class IdeogramProvider implements AiProvider {
   async generateImage(params: GenerateImageParams): Promise<AiGenerationResult> {
     const start = Date.now();
 
-    const response = await fetch('https://api.ideogram.ai/generate', {
+    const response = await fetchWithTimeout('https://api.ideogram.ai/generate', {
       method: 'POST',
       headers: { 'Api-Key': this.apiKey ?? '', 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -40,6 +41,11 @@ export class IdeogramProvider implements AiProvider {
       content: image.url,
       provider: this.name,
       model: 'ideogram-v2',
+      // $0.08/image (modèle V_2, standard) — tarif public vérifié le 2026-08-13 (cf. l'audit
+      // "coût réel d'un crédit"). Avant cette correction, ce provider ne renseignait jamais
+      // `costEstimate`, laissant tout appel à ce fournisseur de repli invisible dans le
+      // reporting de marge réelle (AiEconomicsService.getMarginSummary()).
+      costEstimate: 0.08,
       durationMs: Date.now() - start,
     };
   }

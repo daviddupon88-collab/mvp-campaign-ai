@@ -1,0 +1,40 @@
+{
+  "success": {
+    "generic": "Erfolg",
+    "saved": "Erfolgreich gespeichert",
+    "campaignGenerated": "Kampagne erfolgreich erstellt."
+  },
+  "error": {
+    "generic": "Etwas ist schiefgelaufen."
+  },
+  "warning": {
+    "generic": "Warnung"
+  },
+  "info": {
+    "generic": "Information"
+  },
+  "generation": {
+    "inProgress": "Generierung läuft...",
+    "failed": "Generierung fehlgeschlagen"
+  },
+  "video": {
+    "generating": "Video wird generiert...",
+    "ready": "Video bereit",
+    "failed": "Videogenerierung fehlgeschlagen"
+  },
+  "publication": {
+    "published": "Erfolgreich veröffentlicht",
+    "failed": "Veröffentlichung fehlgeschlagen"
+  },
+  "billing": {
+    "paymentFailed": "Zahlung fehlgeschlagen",
+    "pastDue": "Zahlung überfällig",
+    "renewed": "Abonnement verlängert"
+  },
+  "credits": {
+    "low": "Ihre KI-Credits werden knapp"
+  },
+  "authentication": {
+    "sessionExpired": "Ihre Sitzung ist abgelaufen, bitte melden Sie sich erneut an."
+  }
+}

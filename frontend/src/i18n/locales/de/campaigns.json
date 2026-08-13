@@ -1,0 +1,96 @@
+{
+  "title": "Kampagnen",
+  "newCampaign": "Neue Kampagne",
+  "list": {
+    "empty": "Noch keine Kampagnen."
+  },
+  "new": {
+    "title": "Neue Kampagne",
+    "templateIntro": "Eine Vorlage steuert die Generierung (Ziel, Tonfall, Ansatz), ohne etwas festzulegen — Sie können im nächsten Schritt alles anpassen.",
+    "blankTemplate": "Ohne Vorlage von vorne beginnen",
+    "changeTemplate": "← Vorlage wechseln",
+    "nameLabel": "Kampagnenname",
+    "photoLabel": "Produktfoto — ein Foto genügt: KI erkennt Kategorie, Preis, Stärken und USP automatisch",
+    "photoPreviewAlt": "Vorschau des Produktfotos",
+    "photoDropzoneTitle": "Foto hierher ziehen oder klicken, um hochzuladen",
+    "photoDropzoneHint": "JPG, PNG — optional, wenn unten eine Beschreibung angegeben wird",
+    "photoUploading": "Wird hochgeladen...",
+    "photoUploaded": "Foto hochgeladen",
+    "removePhoto": "Entfernen",
+    "photoUploadError": "Foto-Upload fehlgeschlagen",
+    "descriptionLabel": "Produktbeschreibung (optional, wenn ein Foto vorhanden ist)",
+    "descriptionPlaceholder": "Z. B. mobile Fitness-App mit personalisiertem KI-Coaching",
+    "objectiveLabel": "Ziel",
+    "objectivePlaceholder": "Z. B. 500 qualifizierte Leads in 30 Tagen generieren",
+    "budgetLabel": "Budget (optional)",
+    "channelsLabel": "Kanäle — jeder erhält speziell für ihn generierte Inhalte, keinen gemeinsamen Text",
+    "channelsGroupLabel": "Kanäle",
+    "noChannelSelected": "Kein Kanal ausgewählt: Es wird ein einziger generischer Inhalt generiert.",
+    "missingPhotoOrDescription": "Fügen Sie ein Produktfoto hinzu oder beschreiben Sie es — mindestens eines von beiden ist erforderlich.",
+    "launching": "Wird gestartet...",
+    "uploadingPhoto": "Foto wird hochgeladen...",
+    "generate": "Kampagne generieren",
+    "genericError": "Kampagne konnte nicht erstellt werden"
+  },
+  "detail": {
+    "productPhotoAlt": "Produktfoto",
+    "generating": "KI-Orchestrierung läuft (Analyse → Strategie → Copywriting → Visual)... Diese Seite aktualisiert sich automatisch.",
+    "tabs": {
+      "overview": "Übersicht",
+      "content": "Inhalt",
+      "analytics": "Analysen",
+      "optimizer": "Optimizer"
+    },
+    "generations": {
+      "title": "KI-Generierungen",
+      "empty": "Noch keine Generierung.",
+      "status": {
+        "PENDING": "Ausstehend",
+        "RUNNING": "Läuft",
+        "SUCCEEDED": "Erfolgreich",
+        "FAILED": "Fehlgeschlagen"
+      }
+    },
+    "review": {
+      "title": "Prüfung vor Veröffentlichung",
+      "brandConsistency": "Markenkohärenz:",
+      "approved": "Genehmigt ✓",
+      "approve": "Genehmigen",
+      "reject": "Ablehnen",
+      "rejectPrompt": "Grund für die Ablehnung (mindestens 5 Zeichen):",
+      "roleRestricted": "Nur für die Rolle Marketing Manager und höher."
+    },
+    "rejected": {
+      "title": "Kampagne abgelehnt"
+    },
+    "failed": {
+      "title": "Generierung fehlgeschlagen"
+    },
+    "retry": {
+      "button": "Erneut versuchen"
+    },
+    "publish": {
+      "title": "Veröffentlichen",
+      "empty": "Noch kein soziales Netzwerk verbunden.",
+      "publish": "Veröffentlichen",
+      "publishing": "Wird veröffentlicht..."
+    }
+  },
+  "optimizer": {
+    "runNow": "Jetzt eine Analyse ausführen",
+    "running": "Analyse läuft...",
+    "empty": "Noch keine Empfehlung.",
+    "onlyPublished": "Der Optimizer analysiert veröffentlichte Kampagnen — kommen Sie zurück, sobald diese Kampagne live ist.",
+    "apply": "Anwenden",
+    "dismiss": "Verwerfen"
+  },
+  "calendar": {
+    "empty": "Diesen Monat ist keine Veröffentlichung geplant. Die Planung erfolgt über den Tab \"Inhalt\" einer Kampagne.",
+    "previous": "← Vorherige",
+    "next": "Nächste →",
+    "reschedule": "Neu planen",
+    "reschedulePrompt": "Neues Datum und Uhrzeit (JJJJ-MM-TTTHH:MM):",
+    "cancel": "Abbrechen",
+    "cancelConfirm": "Diese geplante Veröffentlichung abbrechen?"
+  }
+}

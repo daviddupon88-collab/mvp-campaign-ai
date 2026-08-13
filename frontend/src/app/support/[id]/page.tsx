@@ -2,15 +2,21 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { useTranslations, useLocale } from 'next-intl';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { api } from '@/lib/api';
 import { Nav } from '@/components/nav';
 import { Card, Button, Textarea, StatusPill, ErrorText } from '@/components/ui';
+import { INTL_TAGS, Locale } from '@/i18n/config';
 
 export default function TicketDetailPage() {
   const ready = useRequireAuth();
   const params = useParams();
   const ticketId = params.id as string;
+  const t = useTranslations('common.support');
+  const tCommon = useTranslations('common');
+  const locale = useLocale();
+  const intlTag = INTL_TAGS[locale as Locale] ?? 'en-US';
 
   const [ticket, setTicket] = useState<any>(null);
   const [message, setMessage] = useState('');
@@ -53,7 +59,7 @@ export default function TicketDetailPage() {
         {/* Message initial */}
         <Card style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
-            {ticket.user?.email} · {new Date(ticket.createdAt).toLocaleString('fr-FR')}
+            {ticket.user?.email} · {new Date(ticket.createdAt).toLocaleString(intlTag)}
           </div>
           <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{ticket.message}</div>
         </Card>
@@ -66,12 +72,12 @@ export default function TicketDetailPage() {
             style={{
               marginBottom: 12,
               background: r.isStaff ? 'var(--bg-raised)' : 'var(--bg-panel)',
-              marginLeft: r.isStaff ? 0 : 24,
-              marginRight: r.isStaff ? 24 : 0,
+              marginInlineStart: r.isStaff ? 0 : 24,
+              marginInlineEnd: r.isStaff ? 24 : 0,
             }}
           >
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
-              {r.isStaff ? 'Équipe Campaign-ai' : 'Vous'} · {new Date(r.createdAt).toLocaleString('fr-FR')}
+              {r.isStaff ? t('team') : t('you')} · {new Date(r.createdAt).toLocaleString(intlTag)}
             </div>
             <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{r.message}</div>
           </Card>
@@ -79,15 +85,15 @@ export default function TicketDetailPage() {
 
         {isClosed ? (
           <p style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', marginTop: 20 }}>
-            Ce ticket est {ticket.status === 'RESOLVED' ? 'résolu' : 'fermé'}. Répondre le rouvrira.
+            {ticket.status === 'RESOLVED' ? t('ticketClosedResolved') : t('ticketClosedClosed')}
           </p>
         ) : null}
 
         <Card style={{ marginTop: 20 }}>
           <form onSubmit={sendReply}>
-            <Textarea value={message} onChange={setMessage} rows={4} placeholder="Votre réponse..." />
+            <Textarea value={message} onChange={setMessage} rows={4} placeholder={t('replyPlaceholder')} />
             <Button type="submit" disabled={sending || !message.trim()}>
-              {sending ? 'Envoi...' : 'Répondre'}
+              {sending ? tCommon('status.sending') : tCommon('actions.reply')}
             </Button>
           </form>
         </Card>

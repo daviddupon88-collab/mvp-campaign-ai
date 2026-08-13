@@ -1,0 +1,62 @@
+{
+  "title": "Facturation",
+  "creditsUsedThisMonth": "Crédits IA utilisés ce mois",
+  "trialEndsOn": "Essai gratuit — se termine le {date}",
+  "changePlan": "Changer de plan",
+  "checkoutError": "Échec de la création de la session de paiement",
+  "pricingTitle": "Tarifs",
+  "pricingSubtitle": "14 jours d'essai gratuit sur tous les plans — aucune carte bancaire requise pour commencer.",
+  "landingPricingTitle": "Un plan pour chaque étape",
+  "plan": {
+    "loading": "Chargement des tarifs...",
+    "popular": "Populaire",
+    "perMonth": "/mois",
+    "customQuote": "Sur devis",
+    "creditsPerMonth": "{count} crédits IA/mois",
+    "unlimitedSeats": "Sièges illimités",
+    "seats": "{count} sièges",
+    "unlimitedCampaigns": "Campagnes illimitées",
+    "activeCampaigns": "{count} campagnes actives",
+    "unlimitedChannels": "Canaux illimités",
+    "channelsPerCampaign": "{count} canaux par campagne",
+    "currentPlan": "Plan actuel",
+    "choosePlan": "Choisir {name}",
+    "selectPlan": "Choisir ce plan",
+    "contactUs": "Nous contacter"
+  },
+  "trialBanner": {
+    "endsInDays": "{count, plural, one {Votre essai gratuit se termine dans # jour.} other {Votre essai gratuit se termine dans # jours.}}",
+    "endsToday": "Votre essai gratuit se termine aujourd'hui.",
+    "choosePlan": "Choisir un plan"
+  },
+  "quota": {
+    "title": "Consommation de votre plan",
+    "seats": "Sièges",
+    "activeCampaigns": "Campagnes actives",
+    "aiCredits": "Crédits IA",
+    "images": "Images IA",
+    "videos": "Vidéos IA",
+    "socialPosts": "Publications",
+    "optimizerRuns": "Analyses Optimizer",
+    "extraCredits": "Crédits de pack achetés (consommés en priorité)"
+  },
+  "upgrade": {
+    "limitReached": "Plafond atteint",
+    "thisLimit": "ce plafond",
+    "youUsed": "Vous avez utilisé {limit}",
+    "withRecommendation": "Passez au plan {plan} pour continuer sans interruption.",
+    "withoutRecommendation": "Passez à un plan supérieur pour continuer sans interruption.",
+    "seePlans": "Voir les plans",
+    "later": "Plus tard",
+    "limitLabels": {
+      "credits": "vos crédits IA",
+      "seats": "vos sièges",
+      "activeCampaigns": "vos campagnes actives",
+      "channels": "vos canaux simultanés",
+      "images": "vos images IA",
+      "videos": "vos vidéos IA",
+      "socialPosts": "vos publications",
+      "optimizerRuns": "vos analyses Optimizer"
+    }
+  }
+}

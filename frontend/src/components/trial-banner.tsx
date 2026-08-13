@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { api } from '@/lib/api';
 
 // Nudge de conversion : affiché sur le tableau de bord tant que l'organisation est en
@@ -9,15 +10,25 @@ import { api } from '@/lib/api';
 // jamais recalculé côté client à partir d'une date de création approximative, pour rester
 // exact même si le backend ajuste la durée d'essai un jour.
 export function TrialBanner() {
+  const t = useTranslations('billing.trialBanner');
   const [subscription, setSubscription] = useState<any>(null);
+  // Calculé au moment de la réception de `subscription`, dans le même effet — jamais
+  // recalculé pendant le rendu. react-hooks/purity interdit Date.now() (impur) dans le corps
+  // du composant ou d'un useMemo ; un effet reste l'endroit prévu pour ce type d'opération
+  // (synchronisation avec l'horloge, un système externe au même titre que localStorage).
+  const [daysRemaining, setDaysRemaining] = useState<number | null>(null);
 
   useEffect(() => {
-    api.getSubscription().then(setSubscription).catch(() => setSubscription(null));
+    api.getSubscription().then((sub) => {
+      setSubscription(sub);
+      setDaysRemaining(
+        sub?.trialEndsAt ? Math.max(0, Math.ceil((new Date(sub.trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))) : null,
+      );
+    }).catch(() => setSubscription(null));
   }, []);
 
-  if (!subscription || subscription.status !== 'trialing' || !subscription.trialEndsAt) return null;
+  if (!subscription || subscription.status !== 'trialing' || !subscription.trialEndsAt || daysRemaining === null) return null;
 
-  const daysRemaining = Math.max(0, Math.ceil((new Date(subscription.trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
   const urgent = daysRemaining <= 3;
 
   return (
@@ -31,12 +42,10 @@ export function TrialBanner() {
       }}
     >
       <span>
-        {daysRemaining > 0
-          ? `Votre essai gratuit se termine dans ${daysRemaining} jour${daysRemaining > 1 ? 's' : ''}.`
-          : "Votre essai gratuit se termine aujourd'hui."}
+        {daysRemaining > 0 ? t('endsInDays', { count: daysRemaining }) : t('endsToday')}
       </span>
       <Link href="/settings/billing" style={{ color: 'inherit', fontWeight: 600, textDecoration: 'underline' }}>
-        Choisir un plan
+        {t('choosePlan')}
       </Link>
     </div>
   );

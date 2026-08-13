@@ -1,0 +1,17 @@
+{
+  "videoUnsupported": "Your browser does not support video playback.",
+  "imageAlt": "Generated visual for {channel}",
+  "empty": "No content generated yet — the Content Studio fills in automatically as soon as the AI orchestration produces a result.",
+  "saveNewVersion": "Save (new version)",
+  "createVariation": "Create a variation",
+  "schedule": "Schedule",
+  "confirm": "Confirm",
+  "connectedChannel": "Connected channel",
+  "selectPlaceholder": "Select...",
+  "dateAndTime": "Date and time",
+  "versions": "Versions",
+  "variationLabel": "Variation {label}",
+  "versionLabel": "Version {number}",
+  "current": "current",
+  "useThisVersion": "Use this one"
+}

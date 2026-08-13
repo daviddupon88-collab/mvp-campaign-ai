@@ -2,23 +2,27 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui';
 import { PricingGrid } from '@/components/pricing-grid';
-
-const FEATURES = [
-  { title: 'Analyse produit par IA', desc: "Une photo suffit : l'IA détecte catégorie, prix, forces et USP automatiquement." },
-  { title: 'Stratégie & personas', desc: "Objectifs SMART, personas détaillés et positionnement générés à partir de votre produit." },
-  { title: 'Contenus multicanaux', desc: "Textes, visuels et vidéos adaptés à Facebook, Instagram, LinkedIn, TikTok et Google Ads." },
-  { title: 'Validation humaine', desc: "Aucune publication sans approbation — modération et cohérence de marque vérifiées automatiquement." },
-  { title: 'Optimisation continue', desc: "Chaque nuit, l'IA analyse vos campagnes publiées et propose des ajustements mesurables." },
-  { title: 'Multi-équipe', desc: "Invitez votre équipe, gérez les rôles, suivez qui a approuvé quoi." },
-];
+import { LanguageSwitcher } from '@/components/language-switcher';
 
 export default function LandingPage() {
   const router = useRouter();
+  const t = useTranslations('common');
+  const tBilling = useTranslations('billing');
   const [plans, setPlans] = useState<any[]>([]);
+
+  const FEATURES = [
+    { title: t('landing.features.aiAnalysis.title'), desc: t('landing.features.aiAnalysis.desc') },
+    { title: t('landing.features.strategy.title'), desc: t('landing.features.strategy.desc') },
+    { title: t('landing.features.multichannel.title'), desc: t('landing.features.multichannel.desc') },
+    { title: t('landing.features.humanReview.title'), desc: t('landing.features.humanReview.desc') },
+    { title: t('landing.features.optimization.title'), desc: t('landing.features.optimization.desc') },
+    { title: t('landing.features.multiTeam.title'), desc: t('landing.features.multiTeam.desc') },
+  ];
 
   useEffect(() => {
     // Un visiteur déjà connecté n'a aucune raison de revoir la landing page.
@@ -39,9 +43,10 @@ export default function LandingPage() {
           Campaign-ai
         </span>
         <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
-          <Link href="/pricing" style={{ fontSize: 14, color: 'var(--text-secondary)', textDecoration: 'none' }}>Tarifs</Link>
-          <Link href="/login" style={{ fontSize: 14, color: 'var(--text-secondary)', textDecoration: 'none' }}>Connexion</Link>
-          <Link href="/register"><Button>Essai gratuit 14 jours</Button></Link>
+          <Link href="/pricing" style={{ fontSize: 14, color: 'var(--text-secondary)', textDecoration: 'none' }}>{t('footer.pricing')}</Link>
+          <Link href="/login" style={{ fontSize: 14, color: 'var(--text-secondary)', textDecoration: 'none' }}>{t('landing.login')}</Link>
+          <LanguageSwitcher />
+          <Link href="/register"><Button>{t('landing.freeTrialCta')}</Button></Link>
         </div>
       </nav>
 
@@ -55,21 +60,20 @@ export default function LandingPage() {
             padding: '6px 14px', borderRadius: 20, marginBottom: 24,
           }}
         >
-          propulsé par l'IA générative
+          {t('landing.poweredBy')}
         </span>
         <h1 style={{ fontSize: 40, lineHeight: 1.15, margin: '0 0 20px', fontWeight: 600 }}>
-          De votre produit à votre campagne marketing complète.
+          {t('landing.heroTitle')}
         </h1>
         <p style={{ fontSize: 17, color: 'var(--text-secondary)', margin: '0 0 32px', lineHeight: 1.6 }}>
-          Campaign-ai analyse votre produit, crée votre stratégie, génère vos contenus et visuels,
-          puis vous aide à les publier sur vos réseaux.
+          {t('landing.heroSubtitle')}
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-          <Link href="/register"><Button>Démarrer gratuitement</Button></Link>
-          <a href="#features"><Button variant="secondary">Voir les fonctionnalités</Button></a>
+          <Link href="/register"><Button>{t('landing.startFree')}</Button></Link>
+          <a href="#features"><Button variant="secondary">{t('landing.seeFeatures')}</Button></a>
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 16 }}>
-          14 jours gratuits · Sans carte bancaire
+          {t('landing.trialNoCard')}
         </p>
       </section>
 
@@ -88,16 +92,16 @@ export default function LandingPage() {
       {/* Tarifs (données réelles, GET /plans public) */}
       <section style={{ borderTop: '1px solid var(--border)', padding: '64px 24px' }}>
         <div style={{ maxWidth: 1040, margin: '0 auto' }}>
-          <h2 style={{ textAlign: 'center', fontSize: 24, marginBottom: 8 }}>Un plan pour chaque étape</h2>
+          <h2 style={{ textAlign: 'center', fontSize: 24, marginBottom: 8 }}>{tBilling('landingPricingTitle')}</h2>
           <p style={{ textAlign: 'center', fontSize: 14, color: 'var(--text-secondary)', marginBottom: 40 }}>
-            Tous les plans incluent 14 jours d'essai gratuit — aucune carte bancaire requise pour commencer.
+            {tBilling('pricingSubtitle')}
           </p>
           <PricingGrid plans={plans} ctaHref="/register" />
         </div>
       </section>
 
       <footer style={{ textAlign: 'center', padding: '32px 24px', fontSize: 12.5, color: 'var(--text-muted)' }}>
-        © Campaign-ai · <Link href="/pricing" style={{ color: 'inherit' }}>Tarifs</Link>
+        © Campaign-ai · <Link href="/pricing" style={{ color: 'inherit' }}>{t('footer.pricing')}</Link>
       </footer>
     </main>
   );

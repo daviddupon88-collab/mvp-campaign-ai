@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { api } from '@/lib/api';
 import { Nav } from '@/components/nav';
@@ -9,6 +10,8 @@ import { Card, Button, Field, Textarea, StatusPill, ErrorText } from '@/componen
 
 export default function SupportPage() {
   const ready = useRequireAuth();
+  const t = useTranslations('common.support');
+  const tCommon = useTranslations('common');
   const [tickets, setTickets] = useState<any[]>([]);
   const [creating, setCreating] = useState(false);
   const [subject, setSubject] = useState('');
@@ -40,26 +43,26 @@ export default function SupportPage() {
       <Nav />
       <main style={{ maxWidth: 640, margin: '40px auto', padding: '0 16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 500, margin: 0 }}>Support</h1>
-          {!creating && <Button onClick={() => setCreating(true)}>Nouveau ticket</Button>}
+          <h1 style={{ fontSize: 22, fontWeight: 500, margin: 0 }}>{t('title')}</h1>
+          {!creating && <Button onClick={() => setCreating(true)}>{t('newTicket')}</Button>}
         </div>
         <ErrorText message={error} />
 
         {creating && (
           <Card style={{ marginBottom: 20 }}>
             <form onSubmit={submit}>
-              <Field label="Sujet" value={subject} onChange={setSubject} required />
-              <Textarea label="Message" value={message} onChange={setMessage} rows={5} />
+              <Field label={t('subject')} value={subject} onChange={setSubject} required />
+              <Textarea label={t('message')} value={message} onChange={setMessage} rows={5} />
               <div style={{ display: 'flex', gap: 10 }}>
-                <Button type="submit" disabled={submitting}>{submitting ? 'Envoi...' : 'Envoyer'}</Button>
-                <Button variant="secondary" onClick={() => setCreating(false)}>Annuler</Button>
+                <Button type="submit" disabled={submitting}>{submitting ? tCommon('status.sending') : tCommon('actions.send')}</Button>
+                <Button variant="secondary" onClick={() => setCreating(false)}>{tCommon('actions.cancel')}</Button>
               </div>
             </form>
           </Card>
         )}
 
         {tickets.length === 0 && !creating ? (
-          <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Aucun ticket pour le moment.</p></Card>
+          <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>{t('noTickets')}</p></Card>
         ) : (
           tickets.map((t) => (
             <Link key={t.id} href={`/support/${t.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>

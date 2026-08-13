@@ -51,13 +51,14 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'trial',
     name: 'Essai gratuit',
     priceMonthly: 0,
-    // 75, pas 60 : une campagne multi-canaux (ex: 3 canaux + 1 image) coûte mécaniquement
-    // ~65 crédits depuis l'introduction du copywriting différencié par canal (un appel
-    // generateText distinct par canal plutôt qu'un texte unique dupliqué) — 60 crédits
-    // rendait le scénario multi-canaux le plus démonstratif du produit irréalisable dès la
-    // première campagne. Décision commerciale explicite (README item 61), pas un simple
-    // ajustement technique.
-    aiCreditsIncluded: 75,
+    // 300 — INCHANGÉ par la passe du 2026-08-13 (cible "marge nette 40%/plan, prix inchangés").
+    // Un essai à 0€ n'a mathématiquement pas de marge à calculer (40% de 0€ = 0€) : c'est une
+    // dépense d'acquisition assumée, pas un centre de profit. 300 reste dimensionné pour sa
+    // vraie fonction — permettre UNE campagne complète avec vidéo (la démonstration "wow" de
+    // la page d'accueil) ; `maxVideos: 1` reste le vrai plafond qui borne le coût vidéo de
+    // l'essai, pas ce nombre de crédits — au-delà, generateCampaign() dégrade proprement sans
+    // vidéo plutôt que d'échouer (cf. AiOrchestratorService.generateVideoOrDegrade).
+    aiCreditsIncluded: 300,
     maxSeats: 2,
     maxActiveCampaigns: 3,
     maxChannels: 3,
@@ -73,9 +74,19 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'starter',
     name: 'Starter',
     priceMonthly: 39,
-    aiCreditsIncluded: 500,
+    // 920, pas 1150 : passe du 2026-08-13 — prix INCHANGÉ, crédits réaménagés pour cibler
+    // une marge NETTE de 40% (après coût IA réel, Stripe 1,5%+0,25€, et hypothèses
+    // infra/support ~4€+3€/mois — cf. l'audit "coût réel d'un crédit"). Formule : crédits =
+    // (0,60 × prix − Stripe − infra − support) / $0,016874 (coût $ réel moyen par crédit
+    // d'une campagne de référence 3 canaux + image + vidéo + garde-fous, cf. AiEconomicsService
+    // et les tarifs fournisseurs vérifiés le 2026-08-13). Aucun changement de `CREDIT_COSTS`.
+    aiCreditsIncluded: 920,
     maxSeats: 3,
-    maxActiveCampaigns: 5,
+    // 3, pas 5 : corrigé le 2026-08-13 pour refléter EXACTEMENT ce que 920 crédits financent
+    // (⌊920 / 241⌋ campagnes de référence avec vidéo, cf. commentaire ci-dessus) — avant ce
+    // correctif, ce plafond autorisait 5 campagnes actives alors que les crédits n'en
+    // finançaient que 3,8, un écart entre promesse d'accès et promesse de volume.
+    maxActiveCampaigns: 3,
     maxChannels: 3,
     maxImages: null,
     maxVideos: null,
@@ -89,9 +100,13 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'growth',
     name: 'Growth',
     priceMonthly: 99,
-    aiCreditsIncluded: 2000,
+    // 2585, pas 4600 : même méthode que Starter (cf. commentaire ci-dessus), hypothèses
+    // infra/support ~6€+8€/mois.
+    aiCreditsIncluded: 2585,
     maxSeats: 10,
-    maxActiveCampaigns: 20,
+    // 10, pas 20 : corrigé le 2026-08-13 — ⌊2585 / 241⌋ = 10 campagnes de référence avec vidéo
+    // réellement financées par ce nombre de crédits (même logique que Starter ci-dessus).
+    maxActiveCampaigns: 10,
     maxChannels: null,
     maxImages: null,
     maxVideos: null,
@@ -105,9 +120,16 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'business',
     name: 'Business',
     priceMonthly: 249,
-    aiCreditsIncluded: 6000,
+    // 6835, pas 13800 : même méthode que Starter/Growth, hypothèses infra/support ~10€+20€/mois
+    // (sièges et support prioritaire supplémentaires, cf. `features.prioritySupport`).
+    aiCreditsIncluded: 6835,
     maxSeats: 30,
-    maxActiveCampaigns: null,
+    // 28, pas null (illimité) : corrigé le 2026-08-13 — ⌊6835 / 241⌋ = 28 campagnes de
+    // référence avec vidéo réellement financées. Ce plan affichait "Unlimited campaigns" côté
+    // tarifs alors que les crédits plafonnaient déjà le volume réel ; décision produit
+    // explicite de faire correspondre le plafond affiché au volume réellement financé plutôt
+    // que de garder une promesse "illimité" qui ne l'était déjà pas en pratique.
+    maxActiveCampaigns: 28,
     maxChannels: null,
     maxImages: null,
     maxVideos: null,
@@ -121,9 +143,18 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'enterprise',
     name: 'Enterprise',
     priceMonthly: null,
-    aiCreditsIncluded: 30000,
+    // Pas de prix fixe ("sur devis") : la formule marge-nette-40% de Starter/Growth/Business
+    // ne peut pas être résolue sans prix. 69000 reste un plafond indicatif à recalculer PAR
+    // CONTRAT une fois le prix négocié, via la même formule : crédits = (0,60 × prix − Stripe
+    // − infra − support) / $0,016874.
+    aiCreditsIncluded: 69000,
     maxSeats: null,
-    maxActiveCampaigns: null,
+    // 286, pas null (illimité) : corrigé le 2026-08-13, même logique que Business — ⌊69000 /
+    // 241⌋ = 286 campagnes de référence avec vidéo réellement financées par le plafond de
+    // crédits indicatif ci-dessus. Décision produit explicite (comme Business) : faire
+    // correspondre le plafond affiché au volume réel plutôt que d'afficher "illimité". À
+    // recalculer PAR CONTRAT en même temps que les crédits une fois le prix négocié.
+    maxActiveCampaigns: 286,
     maxChannels: null,
     maxImages: null,
     maxVideos: null,
@@ -185,10 +216,13 @@ export function getRecommendedUpgrade(currentPlanKey: string): string | null {
 // différenciées côté crédits, seul le type d'appel — texte/image/vidéo — et son origine
 // le sont). Source de vérité unique utilisée par AiGatewayService.creditCostFor().
 //
-// Note : le coût d'une vidéo (150) dépasse à lui seul le pool de crédits de l'essai
-// gratuit (60) — c'est intentionnel et sans incidence : les plafonds dédiés
-// (PlanDefinition.maxVideos etc.) gouvernent la vidéo/image/publication pendant l'essai,
-// pas le pool de crédits partagé. Cf. EntitlementsService.assertVideoQuotaAvailable().
+// Note : les plafonds dédiés (PlanDefinition.maxVideos etc.) restent le VRAI garde-fou de
+// coût sur la vidéo/image/publication pendant l'essai, indépendamment du pool de crédits
+// partagé — cf. EntitlementsService.assertVideoQuotaAvailable(). Depuis que la vidéo est
+// systématique (une par campagne, cf. README item 63), une 2e ou 3e vidéo d'essai atteint
+// ce plafond dédié (maxVideos: 1) avant même de toucher au pool de crédits ; ce cas précis
+// dégrade proprement (campagne terminée sans vidéo) plutôt que d'échouer, cf.
+// AiOrchestratorService.generateVideoOrDegrade().
 // ---------------------------------------------------------------------------
 export const CREDIT_COSTS: Record<string, Record<string, number>> = {
   // Génération de contenu de campagne (Copywriting AI, Creative Studio, Video Studio).

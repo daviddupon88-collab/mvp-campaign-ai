@@ -1,0 +1,8 @@
+{
+  "generic": "Une erreur est survenue.",
+  "network": "Erreur réseau — vérifiez votre connexion.",
+  "unauthorized": "Vous n'êtes pas autorisé à effectuer cette action.",
+  "notFound": "Cet élément est introuvable.",
+  "validation": "Certaines informations sont manquantes ou invalides.",
+  "unknownApi": "Erreur API ({status})"
+}

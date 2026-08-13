@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { useCurrentUser, canManageTeam } from '@/lib/use-current-user';
 import { api, ApiError } from '@/lib/api';
@@ -13,6 +14,7 @@ const INVITABLE_ROLES = ['ADMIN', 'MARKETING_MANAGER', 'EDITOR', 'VIEWER']; // O
 export default function TeamSettingsPage() {
   const ready = useRequireAuth();
   const { user } = useCurrentUser();
+  const t = useTranslations('settings.team');
   const [members, setMembers] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<any[]>([]);
   const [email, setEmail] = useState('');
@@ -54,7 +56,7 @@ export default function TeamSettingsPage() {
   }
 
   async function remove(membershipId: string) {
-    if (!confirm('Retirer ce membre de l\'organisation ?')) return;
+    if (!confirm(t('removeConfirm'))) return;
     setError(null);
     try { await api.removeMember(membershipId); load(); }
     catch (err: any) { setError(err.message); }
@@ -77,11 +79,11 @@ export default function TeamSettingsPage() {
       <Nav />
       <UpgradeModal error={limitError} onClose={() => setLimitError(null)} />
       <main style={{ maxWidth: 720, margin: '40px auto', padding: '0 16px' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>Équipe</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>{t('title')}</h1>
         <ErrorText message={error} />
 
         <Card style={{ marginBottom: 16 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Membres</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('members')}</h2>
           {members.map((m) => (
             <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
               <div>
@@ -101,7 +103,7 @@ export default function TeamSettingsPage() {
                     onClick={() => remove(m.id)}
                     style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer' }}
                   >
-                    Retirer
+                    {t('remove')}
                   </button>
                 </div>
               ) : (
@@ -113,7 +115,7 @@ export default function TeamSettingsPage() {
 
         {invitations.length > 0 && (
           <Card style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Invitations en attente</h2>
+            <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('pendingInvitations')}</h2>
             {invitations.map((inv) => (
               <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
                 <div>
@@ -122,8 +124,8 @@ export default function TeamSettingsPage() {
                 </div>
                 {canManage && (
                   <div style={{ display: 'flex', gap: 12 }}>
-                    <button onClick={() => resend(inv.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>Renvoyer</button>
-                    <button onClick={() => revoke(inv.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer' }}>Annuler</button>
+                    <button onClick={() => resend(inv.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>{t('resend')}</button>
+                    <button onClick={() => revoke(inv.id)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer' }}>{t('revoke')}</button>
                   </div>
                 )}
               </div>
@@ -133,11 +135,11 @@ export default function TeamSettingsPage() {
 
         {canManage && (
           <Card>
-            <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Inviter un membre</h2>
+            <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('inviteMember')}</h2>
             <form onSubmit={invite}>
-              <Field label="Email" type="email" value={email} onChange={setEmail} required placeholder="collegue@entreprise.com" />
+              <Field label="Email" type="email" value={email} onChange={setEmail} required placeholder={t('emailPlaceholder')} />
               <label style={{ display: 'block', marginBottom: 16 }}>
-                <span style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>Rôle</span>
+                <span style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--text-secondary)' }}>{t('role')}</span>
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
@@ -146,7 +148,7 @@ export default function TeamSettingsPage() {
                   {INVITABLE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
               </label>
-              <Button type="submit" disabled={inviting}>{inviting ? 'Envoi...' : 'Envoyer l\'invitation'}</Button>
+              <Button type="submit" disabled={inviting}>{inviting ? t('inviting') : t('invite')}</Button>
             </form>
           </Card>
         )}

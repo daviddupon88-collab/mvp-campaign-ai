@@ -1,0 +1,17 @@
+{
+  "videoUnsupported": "Votre navigateur ne prend pas en charge la lecture vidéo.",
+  "imageAlt": "Visuel généré pour {channel}",
+  "empty": "Aucun contenu généré pour le moment — le Content Studio se peuple automatiquement dès que l'orchestration IA produit un résultat.",
+  "saveNewVersion": "Enregistrer (nouvelle version)",
+  "createVariation": "Créer une variation",
+  "schedule": "Planifier",
+  "confirm": "Confirmer",
+  "connectedChannel": "Canal connecté",
+  "selectPlaceholder": "Sélectionner...",
+  "dateAndTime": "Date et heure",
+  "versions": "Versions",
+  "variationLabel": "Variation {label}",
+  "versionLabel": "Version {number}",
+  "current": "actuelle",
+  "useThisVersion": "Utiliser celle-ci"
+}

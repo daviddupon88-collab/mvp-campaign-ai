@@ -36,6 +36,6 @@ describe('ApiError', () => {
 
   it('utilise un message par défaut quand le corps de réponse est vide', () => {
     const error = new ApiError({}, 500);
-    expect(error.message).toBe('Erreur API: 500');
+    expect(error.message).toBe('API error (500)');
   });
 });

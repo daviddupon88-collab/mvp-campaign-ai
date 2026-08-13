@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AiGatewayService, AiCallContext } from '../ai-gateway/ai-gateway.service';
 import { AiGenerationResult } from '../ai-gateway/providers/ai-provider.interface';
 import { BrandContextBuilderService } from '../../brand/brand-context-builder.service';
+import { PlanLimitExceededException, PlanLimitExceededPayload } from '../../plans/plan-limit.exception';
 
 export interface GenerateCampaignParams {
   organizationId: string;
@@ -114,22 +115,55 @@ export class AiOrchestratorService {
       'flux', // routage: Flux d'abord pour la qualité photoréaliste, repli automatique sur Ideogram/OpenAI si échec
     );
 
-    // Vidéo générée uniquement si un canal vidéo-natif a été sélectionné (TikTok, Instagram) —
-    // évite de consommer des crédits IA coûteux pour rien (la vidéo est le poste le plus cher,
-    // cf. chapitre 3.5 du Volume 2).
-    let video: AiGenerationResult | null = null;
-    const videoChannels = ['tiktok', 'instagram'];
-    if (effectiveParams.channels?.some((c) => videoChannels.includes(c))) {
-      // Réutilise le script TikTok déjà généré comme base du prompt vidéo plutôt qu'un
-      // prompt générique déconnecté — cohérence entre le script écrit et la vidéo produite.
-      const scriptBasis = channelContent['tiktok']?.content;
-      const videoPrompt = scriptBasis
-        ? `Vidéo publicitaire courte (15s) pour: ${effectiveParams.productDescription}\n\nScript de référence à respecter :\n${scriptBasis}`
-        : `Vidéo publicitaire courte (15s) pour: ${effectiveParams.productDescription}`;
-      video = await this.aiGateway.generateVideo(ctx, { prompt: videoPrompt }, 'google-veo');
-    }
+    // Vidéo générée pour CHAQUE campagne, indépendamment des canaux sélectionnés — c'est la
+    // promesse produit centrale ("une vidéo générée automatiquement pour chaque campagne à
+    // fort potentiel wow"), pas une option réservée à TikTok/Instagram. Avant cette
+    // correction (audit du 2026-08-12), une campagne ciblant uniquement Facebook, LinkedIn
+    // ou Google Ads n'avait jamais de vidéo, quel que soit le budget crédits disponible — en
+    // contradiction directe avec l'objectif produit. Un échec de génération vidéo n'est plus
+    // masqué ici : il remonte comme une vraie erreur, gérée par CampaignGenerationProcessor
+    // (statut FAILED + notification), jamais par un repli silencieux vers un contenu factice
+    // (cf. AiGatewayService.buildAttemptOrder, qui n'utilise plus jamais 'mock' hors AI_MODE=mock).
+    // "8s", pas "15s" : correction de l'audit du 2026-08-13 (item 78) — le prompt promettait
+    // une durée que l'appel réel à Veo ne demandait jamais (GoogleVeoProvider.generateVideo()
+    // utilise `durationSeconds ?? 8`, jamais surchargé ici). Choix délibéré de corriger le
+    // texte plutôt que de faire passer la durée réelle à 15s : ce dernier changement
+    // augmenterait le coût réel d'une vidéo de $4.00 à $7.50 (cf. l'audit "coût réel d'un
+    // crédit") et invaliderait le recalibrage des crédits par plan déjà effectué (item 76) —
+    // une décision de coût, pas une correction de cohérence texte/code.
+    const scriptBasis = channelContent['tiktok']?.content;
+    const videoPrompt = scriptBasis
+      ? `Vidéo publicitaire courte (8s) pour: ${effectiveParams.productDescription}\n\nScript de référence à respecter :\n${scriptBasis}`
+      : `Vidéo publicitaire courte (8s) pour: ${effectiveParams.productDescription}`;
+    const video = await this.generateVideoOrDegrade(ctx, videoPrompt, params.organizationId);
 
     return { productAnalysis, strategy, channelContent, visual, video };
+  }
+
+  // Correction de l'audit du 2026-08-13 : rendre la vidéo obligatoire pour CHAQUE campagne
+  // (ci-dessus) entre directement en conflit avec le plafond dédié `maxVideos` de l'essai
+  // gratuit (1 vidéo au total, cf. plan-catalog.ts) — dès la 2e campagne générée en essai,
+  // ce plafond serait systématiquement atteint, et sans ce garde-fou l'exception remonterait
+  // jusqu'au processor qui marquerait la campagne entière FAILED. Une campagne sans vidéo
+  // À CAUSE D'UN QUOTA MÉTIER ATTEINT (pas d'une panne technique) doit dégrader proprement —
+  // se terminer normalement avec le reste du contenu, la vidéo simplement omise — plutôt que
+  // transformer un plafond commercial attendu en incident technique visible. Distinction
+  // stricte avec toute autre erreur (panne fournisseur, budget dépassé, credits épuisés) :
+  // celles-ci continuent de faire échouer la campagne (cf. CampaignGenerationProcessor),
+  // pour ne jamais réintroduire le repli silencieux corrigé par ailleurs (item 64 du README).
+  private async generateVideoOrDegrade(ctx: AiCallContext, prompt: string, organizationId: string): Promise<AiGenerationResult | null> {
+    try {
+      return await this.aiGateway.generateVideo(ctx, { prompt }, 'google-veo');
+    } catch (error) {
+      if (error instanceof PlanLimitExceededException) {
+        const payload = error.getResponse() as PlanLimitExceededPayload;
+        if (payload.limitType === 'videos') {
+          this.logger.warn(`Quota vidéo de l'essai atteint pour l'organisation ${organizationId} — campagne poursuivie sans vidéo.`);
+          return null;
+        }
+      }
+      throw error;
+    }
   }
 
   // Analyse par vision — catégorie, fourchette de prix, forces et USP détectées directement

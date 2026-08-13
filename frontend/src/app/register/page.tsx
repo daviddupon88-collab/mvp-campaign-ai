@@ -2,12 +2,15 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Card, Button, Field, ErrorText } from '@/components/ui';
+import { LanguageSwitcher } from '@/components/language-switcher';
 
 export default function RegisterPage() {
   const router = useRouter();
+  const t = useTranslations('auth.register');
   const [fullName, setFullName] = useState('');
   const [organizationName, setOrganizationName] = useState('');
   const [email, setEmail] = useState('');
@@ -27,7 +30,10 @@ export default function RegisterPage() {
       localStorage.setItem('accessToken', accessToken);
       router.push('/onboarding');
     } catch (err: any) {
-      setError(err.message ?? "Échec de l'inscription");
+      // Le backend renvoie des messages non traduits (logique d'authentification hors
+      // périmètre de cette internationalisation) — seul le code HTTP (structurel, stable)
+      // est utilisé pour choisir un message traduit, jamais le texte brut du backend.
+      setError(err.statusCode === 409 ? t('emailExists') : t('genericError'));
     } finally {
       setLoading(false);
     }
@@ -35,22 +41,25 @@ export default function RegisterPage() {
 
   return (
     <main style={{ maxWidth: 400, margin: '80px auto', padding: '0 16px' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Créer votre compte Campaign-ai</h1>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24 }}>14 jours d'essai gratuit — aucune carte bancaire requise.</p>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <LanguageSwitcher />
+      </div>
+      <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>{t('title')}</h1>
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24 }}>{t('subtitle')}</p>
       <Card>
         <form onSubmit={handleSubmit}>
-          <Field label="Nom complet" value={fullName} onChange={setFullName} required />
-          <Field label="Nom de l'organisation" value={organizationName} onChange={setOrganizationName} required />
-          <Field label="Email" type="email" value={email} onChange={setEmail} required />
-          <Field label="Mot de passe" type="password" value={password} onChange={setPassword} required />
+          <Field label={t('fullName')} value={fullName} onChange={setFullName} required />
+          <Field label={t('organizationName')} value={organizationName} onChange={setOrganizationName} required />
+          <Field label={t('email')} type="email" value={email} onChange={setEmail} required />
+          <Field label={t('password')} type="password" value={password} onChange={setPassword} required />
           <ErrorText message={error} />
           <Button type="submit" disabled={loading}>
-            {loading ? 'Création...' : 'Créer mon compte'}
+            {loading ? t('submitting') : t('submit')}
           </Button>
         </form>
       </Card>
       <p style={{ marginTop: 16, fontSize: 14, color: 'var(--text-secondary)' }}>
-        Déjà un compte ? <Link href="/login">Se connecter</Link>
+        {t('hasAccount')} <Link href="/login">{t('signIn')}</Link>
       </p>
     </main>
   );

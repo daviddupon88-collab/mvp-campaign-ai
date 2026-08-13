@@ -1,0 +1,96 @@
+{
+  "title": "Campaigns",
+  "newCampaign": "New campaign",
+  "list": {
+    "empty": "No campaigns yet."
+  },
+  "new": {
+    "title": "New campaign",
+    "templateIntro": "A template guides the generation (goal, tone, angle) without locking anything in — you'll be able to adjust everything in the next step.",
+    "blankTemplate": "Start from a blank page, without a template",
+    "changeTemplate": "← Change template",
+    "nameLabel": "Campaign name",
+    "photoLabel": "Product photo — one photo is enough: AI detects category, price, strengths and USP automatically",
+    "photoPreviewAlt": "Product photo preview",
+    "photoDropzoneTitle": "Drag a photo or click to upload",
+    "photoDropzoneHint": "JPG, PNG — optional if a description is provided below",
+    "photoUploading": "Uploading...",
+    "photoUploaded": "Photo uploaded",
+    "removePhoto": "Remove",
+    "photoUploadError": "Failed to upload photo",
+    "descriptionLabel": "Product description (optional if a photo is provided)",
+    "descriptionPlaceholder": "E.g., mobile fitness app with personalized AI coaching",
+    "objectiveLabel": "Objective",
+    "objectivePlaceholder": "E.g., generate 500 qualified leads in 30 days",
+    "budgetLabel": "Budget (optional)",
+    "channelsLabel": "Channels — each one gets content generated specifically for it, not shared text",
+    "channelsGroupLabel": "Channels",
+    "noChannelSelected": "No channel selected: a single generic content will be generated.",
+    "missingPhotoOrDescription": "Add a product photo or describe it — at least one of the two is required.",
+    "launching": "Launching...",
+    "uploadingPhoto": "Uploading photo...",
+    "generate": "Generate campaign",
+    "genericError": "Failed to create campaign"
+  },
+  "detail": {
+    "productPhotoAlt": "Product photo",
+    "generating": "AI orchestration in progress (analysis → strategy → copywriting → visual)... This page refreshes automatically.",
+    "tabs": {
+      "overview": "Overview",
+      "content": "Content",
+      "analytics": "Analytics",
+      "optimizer": "Optimizer"
+    },
+    "generations": {
+      "title": "AI generations",
+      "empty": "No generation yet.",
+      "status": {
+        "PENDING": "Pending",
+        "RUNNING": "Running",
+        "SUCCEEDED": "Succeeded",
+        "FAILED": "Failed"
+      }
+    },
+    "review": {
+      "title": "Pre-publication review",
+      "brandConsistency": "Brand consistency:",
+      "approved": "Approved ✓",
+      "approve": "Approve",
+      "reject": "Reject",
+      "rejectPrompt": "Reason for rejection (5 characters minimum):",
+      "roleRestricted": "Reserved to the Marketing Manager role and above."
+    },
+    "rejected": {
+      "title": "Campaign rejected"
+    },
+    "failed": {
+      "title": "Generation failed"
+    },
+    "retry": {
+      "button": "Retry"
+    },
+    "publish": {
+      "title": "Publish",
+      "empty": "No social network connected yet.",
+      "publish": "Publish",
+      "publishing": "Publishing..."
+    }
+  },
+  "optimizer": {
+    "runNow": "Run an analysis now",
+    "running": "Analyzing...",
+    "empty": "No recommendation yet.",
+    "onlyPublished": "The Optimizer analyzes published campaigns — come back once this campaign is live.",
+    "apply": "Apply",
+    "dismiss": "Dismiss"
+  },
+  "calendar": {
+    "empty": "No publication scheduled this month. Scheduling is done from a campaign's \"Content\" tab.",
+    "previous": "← Previous",
+    "next": "Next →",
+    "reschedule": "Reschedule",
+    "reschedulePrompt": "New date and time (YYYY-MM-DDTHH:MM):",
+    "cancel": "Cancel",
+    "cancelConfirm": "Cancel this scheduled publication?"
+  }
+}

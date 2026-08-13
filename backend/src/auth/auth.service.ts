@@ -103,6 +103,18 @@ export class AuthService {
     return this.buildAuthResponse(userId, email, organizationId, membership.role, user?.isPlatformAdmin ?? false);
   }
 
+  // Préférence de langue de l'interface (i18n) — jamais lue ni utilisée par la génération
+  // de campagne, qui reste un paramètre indépendant. cf. UpdateLanguageDto pour la validation
+  // des valeurs autorisées.
+  async updateLanguage(userId: string, preferredLanguage: string) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { preferredLanguage: preferredLanguage as any },
+      select: { id: true, preferredLanguage: true },
+    });
+    return user;
+  }
+
   private buildAuthResponse(userId: string, email: string, organizationId: string, role: string, isPlatformAdmin = false) {
     const payload = { sub: userId, email, organizationId, role, isPlatformAdmin };
     return {

@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsString } from 'class-validator';
+import { IsEmail, IsIn } from 'class-validator';
 
 const INVITABLE_ROLES = ['ADMIN', 'MARKETING_MANAGER', 'EDITOR', 'VIEWER']; // OWNER ne s'invite jamais, cf. TeamsService
 

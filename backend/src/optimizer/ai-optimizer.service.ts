@@ -103,16 +103,28 @@ export class AiOptimizerService {
     const actions = (recommendation.details as { actions?: Array<{ type: string }> })?.actions ?? [];
     const automationEligible = actions.length > 0 && actions.every((a) => SAFE_ACTION_TYPES.includes(a.type));
 
-    const created = await this.prisma.optimizationRecommendation.create({
-      data: {
-        organizationId,
-        campaignId,
-        summary: recommendation.summary,
-        details: recommendation.details as any,
-        status: 'PENDING',
-        automationEligible,
+    // Re-vérifié DANS la transaction qui crée la recommandation (pas seulement avant l'appel
+    // IA, potentiellement long) — corrige la race condition identifiée à l'audit : le cron
+    // nocturne et un déclenchement manuel peuvent tourner en parallèle pour la même
+    // organisation, chacun ayant vu un compte sous le plafond juste avant l'appel IA de l'autre.
+    // Isolation Serializable : si les deux transactions se chevauchent réellement, Postgres
+    // fait échouer l'une des deux plutôt que de laisser les deux compter passer.
+    const created = await this.prisma.$transaction(
+      async (tx) => {
+        await this.entitlements.assertOptimizerRunAvailable(organizationId, tx as any);
+        return tx.optimizationRecommendation.create({
+          data: {
+            organizationId,
+            campaignId,
+            summary: recommendation.summary,
+            details: recommendation.details as any,
+            status: 'PENDING',
+            automationEligible,
+          },
+        });
       },
-    });
+      { isolationLevel: 'Serializable' },
+    );
     this.logger.log(`Nouvelle recommandation générée pour la campagne ${campaignId}`);
 
     // Brand Brain (Phase 15) : seules les performances notables (au-dessus ou en-dessous de

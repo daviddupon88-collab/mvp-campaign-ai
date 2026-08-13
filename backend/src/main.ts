@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import * as express from 'express';
 import * as Sentry from '@sentry/node';
@@ -24,7 +25,7 @@ async function bootstrap() {
 
   // bodyParser désactivé globalement : le webhook Stripe a besoin du corps brut
   // (non parsé) pour vérifier la signature ; tout le reste de l'API utilise du JSON classique.
-  const app = await NestFactory.create(AppModule, { bodyParser: false, bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false, bufferLogs: true });
 
   // Logger structuré JSON, avec ID de corrélation automatique par requête (cf. RequestContextService).
   const requestContext = app.get(RequestContextService);
@@ -43,6 +44,11 @@ async function bootstrap() {
     app.use('/uploads', express.static(storage.getLocalDir()));
   }
 
+  // Express 5 (NestJS 11) change le parseur de query string par défaut de "extended" à
+  // "simple" — sans incidence sur les query params déjà utilisés dans cette API (aucun
+  // paramètre imbriqué/tableau, vérifié), mais restauré explicitement pour ne dépendre
+  // d'aucune analyse a posteriori si un futur endpoint en ajoutait un.
+  app.set('query parser', 'extended');
   app.enableCors();
   app.setGlobalPrefix('api', { exclude: ['health/live', 'health/ready', 'metrics'] });
   app.useGlobalPipes(

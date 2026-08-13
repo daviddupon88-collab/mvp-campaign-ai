@@ -66,7 +66,7 @@ export class OptimizerController {
   // Fondation pour la phase ultérieure d'automatisation contrôlée — cf. AutomationService.
   // Renvoie un statut désactivé tant que ENABLE_CONTROLLED_AUTOMATION n'est pas activé.
   @Get('optimizer/automation-status')
-  automationStatus(@CurrentUser() user: AuthUser) {
+  automationStatus() {
     return { enabled: this.automationService.isEnabled() };
   }
 

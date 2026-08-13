@@ -1,0 +1,95 @@
+{
+  "appName": "Campaign-ai",
+  "actions": {
+    "save": "Enregistrer",
+    "saveChanges": "Enregistrer les modifications",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "remove": "Retirer",
+    "edit": "Modifier",
+    "confirm": "Confirmer",
+    "close": "Fermer",
+    "back": "Retour",
+    "next": "Suivant",
+    "previous": "Précédent",
+    "retry": "Réessayer",
+    "search": "Rechercher",
+    "send": "Envoyer",
+    "resend": "Renvoyer",
+    "revoke": "Annuler",
+    "upload": "Téléverser",
+    "publish": "Publier",
+    "reply": "Répondre",
+    "seeMore": "Voir plus"
+  },
+  "status": {
+    "loading": "Chargement...",
+    "saving": "Enregistrement...",
+    "sending": "Envoi...",
+    "empty": "Rien à afficher pour le moment.",
+    "error": "Erreur",
+    "success": "Succès"
+  },
+  "statusLabels": {
+    "DRAFT": "brouillon",
+    "ARCHIVED": "archivé",
+    "PASSED": "réussi",
+    "DONE": "terminé",
+    "APPROVED": "approuvé",
+    "PUBLISHED": "publié",
+    "ACTIVE": "actif",
+    "RESOLVED": "résolu",
+    "FLAGGED": "signalé",
+    "PENDING": "en attente",
+    "READY_FOR_REVIEW": "prêt pour validation",
+    "IN_PROGRESS": "en cours",
+    "OPEN": "ouvert",
+    "SCHEDULED": "planifié",
+    "BLOCKED": "bloqué",
+    "REJECTED": "rejeté",
+    "FAILED": "échec",
+    "SUSPENDED": "suspendu",
+    "APPLIED": "appliqué",
+    "DISMISSED": "écarté",
+    "CLOSED": "fermé"
+  },
+  "help": {
+    "title": "Centre d'aide",
+    "searchPlaceholder": "Rechercher...",
+    "noResults": "Aucun article ne correspond à votre recherche.",
+    "backToHelp": "← Retour au centre d'aide"
+  },
+  "support": {
+    "title": "Support",
+    "newTicket": "Nouveau ticket",
+    "subject": "Sujet",
+    "message": "Message",
+    "noTickets": "Aucun ticket pour le moment.",
+    "team": "Équipe Campaign-ai",
+    "you": "Vous",
+    "ticketClosedResolved": "Ce ticket est résolu. Répondre le rouvrira.",
+    "ticketClosedClosed": "Ce ticket est fermé. Répondre le rouvrira.",
+    "replyPlaceholder": "Votre réponse..."
+  },
+  "footer": {
+    "pricing": "Tarifs"
+  },
+  "landing": {
+    "login": "Connexion",
+    "freeTrialCta": "Essai gratuit 14 jours",
+    "poweredBy": "propulsé par l'IA générative",
+    "heroTitle": "De votre produit à votre campagne marketing complète.",
+    "heroSubtitle": "Campaign-ai analyse votre produit, crée votre stratégie, génère vos contenus et visuels, puis vous aide à les publier sur vos réseaux.",
+    "startFree": "Démarrer gratuitement",
+    "seeFeatures": "Voir les fonctionnalités",
+    "trialNoCard": "14 jours gratuits · Sans carte bancaire",
+    "features": {
+      "aiAnalysis": { "title": "Analyse produit par IA", "desc": "Une photo suffit : l'IA détecte catégorie, prix, forces et USP automatiquement." },
+      "strategy": { "title": "Stratégie & personas", "desc": "Objectifs SMART, personas détaillés et positionnement générés à partir de votre produit." },
+      "multichannel": { "title": "Contenus multicanaux", "desc": "Textes, visuels et vidéos adaptés à Facebook, Instagram, LinkedIn, TikTok et Google Ads." },
+      "humanReview": { "title": "Validation humaine", "desc": "Aucune publication sans approbation — modération et cohérence de marque vérifiées automatiquement." },
+      "optimization": { "title": "Optimisation continue", "desc": "Chaque nuit, l'IA analyse vos campagnes publiées et propose des ajustements mesurables." },
+      "multiTeam": { "title": "Multi-équipe", "desc": "Invitez votre équipe, gérez les rôles, suivez qui a approuvé quoi." }
+    }
+  }
+}

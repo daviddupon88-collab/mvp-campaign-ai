@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import {
   SocialAdapter,
   OAuthAuthorizeParams,
@@ -41,7 +42,7 @@ export class TikTokAdapter implements SocialAdapter {
   }
 
   async exchangeCodeForToken({ code, redirectUri }: OAuthCallbackParams): Promise<OAuthTokenResult> {
-    const res = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+    const res = await fetchWithTimeout('https://open.tiktokapis.com/v2/oauth/token/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -66,7 +67,7 @@ export class TikTokAdapter implements SocialAdapter {
 
   // TikTok expose un refresh_token OAuth2 standard, valide 365 jours.
   async refreshAccessToken(refreshToken: string): Promise<OAuthTokenResult> {
-    const res = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+    const res = await fetchWithTimeout('https://open.tiktokapis.com/v2/oauth/token/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -95,7 +96,7 @@ export class TikTokAdapter implements SocialAdapter {
     // Initie la publication asynchrone : TikTok télécharge la vidéo depuis l'URL fournie,
     // puis la traite (encodage, vérifications) avant qu'elle soit réellement publiée —
     // d'où le statut initial "PROCESSING", suivi via checkPublishStatus() par PublishingService.
-    const res = await fetch('https://open.tiktokapis.com/v2/post/publish/video/init/', {
+    const res = await fetchWithTimeout('https://open.tiktokapis.com/v2/post/publish/video/init/', {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -119,7 +120,7 @@ export class TikTokAdapter implements SocialAdapter {
   // Interroge le statut réel de la publication — appelé par PublishingService juste après
   // publish() pour ne renvoyer PUBLISHED que lorsque TikTok a confirmé le traitement complet.
   async checkPublishStatus(accessToken: string, publishId: string): Promise<AsyncPublishStatus> {
-    const res = await fetch('https://open.tiktokapis.com/v2/post/publish/status/fetch/', {
+    const res = await fetchWithTimeout('https://open.tiktokapis.com/v2/post/publish/status/fetch/', {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ publish_id: publishId }),
@@ -143,7 +144,7 @@ export class TikTokAdapter implements SocialAdapter {
   // video_id réel par PublishingService au moment où checkPublishStatus() confirme la
   // publication, plutôt que de réutiliser le publish_id ici.
   async fetchInsights({ accessToken, externalPostId }: FetchInsightsParams): Promise<InsightsResult> {
-    const res = await fetch('https://open.tiktokapis.com/v2/video/query/?fields=id,view_count,like_count,comment_count,share_count', {
+    const res = await fetchWithTimeout('https://open.tiktokapis.com/v2/video/query/?fields=id,view_count,like_count,comment_count,share_count', {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ filters: { video_ids: [externalPostId] } }),

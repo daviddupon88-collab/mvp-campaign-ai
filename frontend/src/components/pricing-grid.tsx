@@ -1,6 +1,8 @@
 'use client';
 
+import { useTranslations, useLocale } from 'next-intl';
 import { Button } from './ui';
+import { INTL_TAGS, Locale } from '@/i18n/config';
 
 interface Plan {
   key: string;
@@ -29,8 +31,12 @@ export function PricingGrid({
   onSelectPlan?: (planKey: string) => void; // mode in-app : déclenche le checkout Stripe
   currentPlanKey?: string;
 }) {
+  const t = useTranslations('billing.plan');
+  const locale = useLocale();
+  const intlTag = INTL_TAGS[locale as Locale] ?? 'en-US';
+
   if (plans.length === 0) {
-    return <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Chargement des tarifs...</p>;
+    return <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{t('loading')}</p>;
   }
 
   return (
@@ -59,7 +65,7 @@ export function PricingGrid({
                 style={{
                   position: 'absolute',
                   top: -11,
-                  left: 22,
+                  insetInlineStart: 22,
                   background: 'var(--accent-brand)',
                   color: 'var(--bg-page)',
                   fontSize: 10.5,
@@ -68,38 +74,38 @@ export function PricingGrid({
                   borderRadius: 20,
                 }}
               >
-                Populaire
+                {t('popular')}
               </span>
             )}
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>{plan.name}</div>
             <div style={{ fontFamily: 'var(--font-space-grotesk)', fontSize: 26, fontWeight: 600, marginBottom: 2 }}>
-              {plan.priceMonthly !== null ? `${plan.priceMonthly}€` : 'Sur devis'}
-              {plan.priceMonthly !== null && <span style={{ fontSize: 13, fontWeight: 400 }}> /mois</span>}
+              {plan.priceMonthly !== null ? `${plan.priceMonthly}€` : t('customQuote')}
+              {plan.priceMonthly !== null && <span style={{ fontSize: 13, fontWeight: 400 }}> {t('perMonth')}</span>}
             </div>
             <div className="mono" style={{ fontSize: 11.5, color: 'var(--accent-done)', marginBottom: 16 }}>
-              {plan.aiCreditsIncluded.toLocaleString('fr-FR')} crédits IA/mois
+              {t('creditsPerMonth', { count: new Intl.NumberFormat(intlTag).format(plan.aiCreditsIncluded) })}
             </div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', fontSize: 12.5, flex: 1, color: 'var(--text-secondary)' }}>
               <li style={{ padding: '5px 0', borderTop: '1px solid var(--border)' }}>
-                {plan.maxSeats ? `${plan.maxSeats} sièges` : 'Sièges illimités'}
+                {plan.maxSeats ? t('seats', { count: plan.maxSeats }) : t('unlimitedSeats')}
               </li>
               <li style={{ padding: '5px 0', borderTop: '1px solid var(--border)' }}>
-                {plan.maxActiveCampaigns ? `${plan.maxActiveCampaigns} campagnes actives` : 'Campagnes illimitées'}
+                {plan.maxActiveCampaigns ? t('activeCampaigns', { count: plan.maxActiveCampaigns }) : t('unlimitedCampaigns')}
               </li>
               <li style={{ padding: '5px 0', borderTop: '1px solid var(--border)' }}>
-                {plan.maxChannels ? `${plan.maxChannels} canaux par campagne` : 'Canaux illimités'}
+                {plan.maxChannels ? t('channelsPerCampaign', { count: plan.maxChannels }) : t('unlimitedChannels')}
               </li>
             </ul>
 
             {isCurrent ? (
-              <Button variant="secondary" disabled>Plan actuel</Button>
+              <Button variant="secondary" disabled>{t('currentPlan')}</Button>
             ) : ctaHref ? (
               <a href={ctaHref} style={{ textDecoration: 'none' }}>
-                <Button variant={isFeatured ? 'primary' : 'secondary'}>Choisir {plan.name}</Button>
+                <Button variant={isFeatured ? 'primary' : 'secondary'}>{t('choosePlan', { name: plan.name })}</Button>
               </a>
             ) : (
               <Button variant={isFeatured ? 'primary' : 'secondary'} onClick={() => onSelectPlan?.(plan.key)}>
-                {plan.priceMonthly === null ? 'Nous contacter' : 'Choisir ce plan'}
+                {plan.priceMonthly === null ? t('contactUs') : t('selectPlan')}
               </Button>
             )}
           </div>

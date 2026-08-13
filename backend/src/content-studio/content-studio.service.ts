@@ -99,27 +99,7 @@ export class ContentStudioService {
   // fait devenir la version courante. L'historique complet reste consultable via getById().
   async editContent(organizationId: string, pieceId: string, params: EditVersionParams) {
     const piece = await this.getById(organizationId, pieceId);
-
-    // La génération IA applique déjà les limites 30/90 caractères (troncature automatique,
-    // cf. AiOrchestratorService.parseGoogleAdsContent) — sans ce contrôle, une édition
-    // manuelle pouvait les dépasser silencieusement et produire une annonce rejetée par
-    // Google Ads au moment de la publication réelle.
-    if (piece.channel === 'googleads' && params.body) {
-      validateGoogleAdsBody(params.body);
-    }
-
-    // Brand Brain (Phase 11) : une RULE active ne dépend jamais uniquement du prompt de
-    // génération — un terme explicitement interdit (metadata.forbiddenTerms) est bloqué ici
-    // par du code, y compris sur une édition manuelle qui n'est jamais passée par l'IA.
-    if (params.body) {
-      const violations = await this.brandRuleGuard.checkText(organizationId, params.body, { channel: piece.channel });
-      if (violations.length > 0) {
-        const [first] = violations;
-        throw new BadRequestException(
-          `Contenu refusé — règle de marque enfreinte : "${first.ruleContent}" (terme interdit détecté : "${first.matchedTerm}").`,
-        );
-      }
-    }
+    if (params.body) await this.validateTextBody(organizationId, piece, params.body);
 
     const nextVersionNumber = Math.max(0, ...piece.versions.filter((v) => !v.label).map((v) => v.versionNumber)) + 1;
 
@@ -153,6 +133,44 @@ export class ContentStudioService {
     }
 
     return updated;
+  }
+
+  // Point de passage unique pour tout corps de texte soumis manuellement (édition ou
+  // variation) — avant cette correction (audit), createVariations() ne passait par AUCUN de
+  // ces contrôles alors qu'editContent() les appliquait déjà : une variation pouvait dépasser
+  // les limites Google Ads ou contenir un terme de marque interdit, puis être promue version
+  // courante via selectVariationAsCurrent sans jamais avoir été bloquée.
+  private async validateTextBody(
+    organizationId: string,
+    piece: { type: string; channel: string },
+    body: string,
+  ): Promise<void> {
+    // Un contenu VIDEO n'a pas de corps texte éditable — currentVersion.body y est un champ
+    // sans rapport avec l'asset vidéo réel (assetId). Éditer/varier "le texte" d'une vidéo
+    // n'a jamais de sens et ne devrait jamais être exposé côté UI (cf. frontend), mais on
+    // refuse aussi explicitement côté API pour ne dépendre d'aucun garde-fou côté client.
+    if (piece.type === 'VIDEO') {
+      throw new BadRequestException("Impossible d'éditer ou de créer une variation textuelle sur un contenu vidéo.");
+    }
+
+    // La génération IA applique déjà les limites 30/90 caractères (troncature automatique,
+    // cf. AiOrchestratorService.parseGoogleAdsContent) — sans ce contrôle, une soumission
+    // manuelle pouvait les dépasser silencieusement et produire une annonce rejetée par
+    // Google Ads au moment de la publication réelle.
+    if (piece.channel === 'googleads') {
+      validateGoogleAdsBody(body);
+    }
+
+    // Brand Brain (Phase 11) : une RULE active ne dépend jamais uniquement du prompt de
+    // génération — un terme explicitement interdit (metadata.forbiddenTerms) est bloqué ici
+    // par du code, y compris sur une soumission manuelle qui n'est jamais passée par l'IA.
+    const violations = await this.brandRuleGuard.checkText(organizationId, body, { channel: piece.channel });
+    if (violations.length > 0) {
+      const [first] = violations;
+      throw new BadRequestException(
+        `Contenu refusé — règle de marque enfreinte : "${first.ruleContent}" (terme interdit détecté : "${first.matchedTerm}").`,
+      );
+    }
   }
 
   // Une seule voie d'entrée pour toute observation dérivée d'une édition manuelle — ne
@@ -211,6 +229,12 @@ export class ContentStudioService {
   async createVariations(organizationId: string, pieceId: string, variations: CreateVariationParams[]) {
     if (variations.length === 0) throw new BadRequestException('Au moins une variation est requise');
     const piece = await this.getById(organizationId, pieceId);
+
+    // Toutes les variations sont validées AVANT que la moindre ne soit créée — pas de
+    // création partielle d'un lot dont une variation ultérieure aurait été refusée.
+    for (const v of variations) {
+      if (v.body) await this.validateTextBody(organizationId, piece, v.body);
+    }
 
     const variantGroup = Math.floor(Date.now() / 1000); // identifiant de regroupement simple mais suffisant
     const baseVersionNumber = Math.max(0, ...piece.versions.map((v) => v.versionNumber));

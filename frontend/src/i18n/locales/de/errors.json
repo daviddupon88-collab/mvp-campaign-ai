@@ -1,0 +1,8 @@
+{
+  "generic": "Etwas ist schiefgelaufen.",
+  "network": "Netzwerkfehler — bitte überprüfen Sie Ihre Verbindung.",
+  "unauthorized": "Sie sind nicht berechtigt, diese Aktion auszuführen.",
+  "notFound": "Dieses Element konnte nicht gefunden werden.",
+  "validation": "Einige Angaben fehlen oder sind ungültig.",
+  "unknownApi": "API-Fehler ({status})"
+}

@@ -1,0 +1,95 @@
+{
+  "appName": "Campaign-ai",
+  "actions": {
+    "save": "Speichern",
+    "saveChanges": "Änderungen speichern",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "remove": "Entfernen",
+    "edit": "Bearbeiten",
+    "confirm": "Bestätigen",
+    "close": "Schließen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "previous": "Vorherige",
+    "retry": "Erneut versuchen",
+    "search": "Suchen",
+    "send": "Senden",
+    "resend": "Erneut senden",
+    "revoke": "Widerrufen",
+    "upload": "Hochladen",
+    "publish": "Veröffentlichen",
+    "reply": "Antworten",
+    "seeMore": "Mehr anzeigen"
+  },
+  "status": {
+    "loading": "Wird geladen...",
+    "saving": "Wird gespeichert...",
+    "sending": "Wird gesendet...",
+    "empty": "Noch nichts vorhanden.",
+    "error": "Fehler",
+    "success": "Erfolg"
+  },
+  "statusLabels": {
+    "DRAFT": "Entwurf",
+    "ARCHIVED": "archiviert",
+    "PASSED": "bestanden",
+    "DONE": "erledigt",
+    "APPROVED": "genehmigt",
+    "PUBLISHED": "veröffentlicht",
+    "ACTIVE": "aktiv",
+    "RESOLVED": "gelöst",
+    "FLAGGED": "markiert",
+    "PENDING": "ausstehend",
+    "READY_FOR_REVIEW": "bereit zur Prüfung",
+    "IN_PROGRESS": "in Bearbeitung",
+    "OPEN": "offen",
+    "SCHEDULED": "geplant",
+    "BLOCKED": "blockiert",
+    "REJECTED": "abgelehnt",
+    "FAILED": "fehlgeschlagen",
+    "SUSPENDED": "gesperrt",
+    "APPLIED": "angewendet",
+    "DISMISSED": "verworfen",
+    "CLOSED": "geschlossen"
+  },
+  "help": {
+    "title": "Hilfe-Center",
+    "searchPlaceholder": "Suchen...",
+    "noResults": "Kein Artikel entspricht Ihrer Suche.",
+    "backToHelp": "← Zurück zum Hilfe-Center"
+  },
+  "support": {
+    "title": "Support",
+    "newTicket": "Neues Ticket",
+    "subject": "Betreff",
+    "message": "Nachricht",
+    "noTickets": "Noch keine Tickets.",
+    "team": "Campaign-ai-Team",
+    "you": "Sie",
+    "ticketClosedResolved": "Dieses Ticket ist gelöst. Eine Antwort öffnet es erneut.",
+    "ticketClosedClosed": "Dieses Ticket ist geschlossen. Eine Antwort öffnet es erneut.",
+    "replyPlaceholder": "Ihre Antwort..."
+  },
+  "footer": {
+    "pricing": "Preise"
+  },
+  "landing": {
+    "login": "Anmelden",
+    "freeTrialCta": "14 Tage kostenlos testen",
+    "poweredBy": "unterstützt durch generative KI",
+    "heroTitle": "Von Ihrem Produkt zu Ihrer kompletten Marketingkampagne.",
+    "heroSubtitle": "Campaign-ai analysiert Ihr Produkt, entwickelt Ihre Strategie, generiert Ihre Inhalte und Visuals und hilft Ihnen anschließend, sie auf Ihren Kanälen zu veröffentlichen.",
+    "startFree": "Kostenlos starten",
+    "seeFeatures": "Funktionen ansehen",
+    "trialNoCard": "14 Tage kostenlos · Keine Kreditkarte erforderlich",
+    "features": {
+      "aiAnalysis": { "title": "KI-Produktanalyse", "desc": "Ein Foto genügt: KI erkennt Kategorie, Preis, Stärken und USP automatisch." },
+      "strategy": { "title": "Strategie & Personas", "desc": "SMART-Ziele, detaillierte Personas und Positionierung, generiert aus Ihrem Produkt." },
+      "multichannel": { "title": "Multichannel-Inhalte", "desc": "Texte, Visuals und Videos angepasst an Facebook, Instagram, LinkedIn, TikTok und Google Ads." },
+      "humanReview": { "title": "Menschliche Prüfung", "desc": "Keine Veröffentlichung ohne Freigabe — Moderation und Markenkohärenz automatisch geprüft." },
+      "optimization": { "title": "Kontinuierliche Optimierung", "desc": "Jede Nacht analysiert die KI Ihre veröffentlichten Kampagnen und schlägt messbare Anpassungen vor." },
+      "multiTeam": { "title": "Multi-Team", "desc": "Laden Sie Ihr Team ein, verwalten Sie Rollen, verfolgen Sie, wer was genehmigt hat." }
+    }
+  }
+}

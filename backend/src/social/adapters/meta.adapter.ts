@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import {
   SocialAdapter,
   OAuthAuthorizeParams,
@@ -53,14 +54,14 @@ export class MetaAdapter implements SocialAdapter {
       code,
     }).toString();
 
-    const tokenRes = await fetch(tokenUrl.toString());
+    const tokenRes = await fetchWithTimeout(tokenUrl.toString());
     if (!tokenRes.ok) throw SocialApiError.fromHttpStatus(PLATFORM, tokenRes.status, `OAuth error: ${await tokenRes.text()}`);
     const { access_token: shortLivedToken } = await tokenRes.json();
 
     const longLived = await this.exchangeForLongLivedToken(shortLivedToken);
 
     // Étape 3 : récupère la première Page gérée par l'utilisateur (MVP : une page par organisation).
-    const pagesRes = await fetch(`${GRAPH_BASE}/me/accounts?access_token=${longLived.accessToken}`);
+    const pagesRes = await fetchWithTimeout(`${GRAPH_BASE}/me/accounts?access_token=${longLived.accessToken}`);
     if (!pagesRes.ok) throw SocialApiError.fromHttpStatus(PLATFORM, pagesRes.status, `Échec de récupération des pages: ${await pagesRes.text()}`);
     const pagesData = await pagesRes.json();
     const page = pagesData.data?.[0];
@@ -99,7 +100,7 @@ export class MetaAdapter implements SocialAdapter {
       client_secret: this.appSecret,
       fb_exchange_token: token,
     }).toString();
-    const res = await fetch(longLivedUrl.toString());
+    const res = await fetchWithTimeout(longLivedUrl.toString());
     if (!res.ok) throw SocialApiError.fromHttpStatus(PLATFORM, res.status, `Échec d'échange de token longue durée: ${await res.text()}`);
     const { access_token, expires_in } = await res.json();
     return { accessToken: access_token, expiresAt: expires_in ? new Date(Date.now() + expires_in * 1000) : undefined };
@@ -116,7 +117,7 @@ export class MetaAdapter implements SocialAdapter {
       ...(mediaUrl ? { url: mediaUrl, caption: caption ?? '' } : { message: caption ?? '' }),
     });
 
-    const res = await fetch(endpoint, { method: 'POST', body });
+    const res = await fetchWithTimeout(endpoint, { method: 'POST', body });
     if (!res.ok) {
       const errText = await res.text();
       throw SocialApiError.fromHttpStatus(PLATFORM, res.status, `Échec de publication: ${errText}`);
@@ -131,7 +132,7 @@ export class MetaAdapter implements SocialAdapter {
   // organique et on laisse `spend` non renseigné pour ce type de publication.
   async fetchInsights({ accessToken, externalPostId }: FetchInsightsParams): Promise<InsightsResult> {
     const metrics = 'post_impressions,post_engaged_users';
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GRAPH_BASE}/${externalPostId}/insights?metric=${metrics}&access_token=${accessToken}`,
     );
     if (!res.ok) return {}; // insights non-critiques : échec silencieux, pas de SocialApiError ici

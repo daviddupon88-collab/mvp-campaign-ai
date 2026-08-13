@@ -1,0 +1,20 @@
+{
+  "overview": "Overview",
+  "impressions": "Impressions",
+  "ctr": "CTR",
+  "cpa": "CPA",
+  "roas": "ROAS",
+  "roasUnavailable": "Not calculable",
+  "roasHint": "ROAS is not calculable without a recorded conversion value (see form below).",
+  "byChannel": "By channel",
+  "byCreative": "By creative",
+  "byCreativeHint": "Which variation actually won.",
+  "noData": "No data yet.",
+  "onlyPublished": "Statistics are only available once the campaign is published.",
+  "recordConversion": "Record a conversion",
+  "recordConversionHint": "No adapter reports conversions programmatically — promo code, UTM, or manual declaration.",
+  "count": "Count",
+  "totalValue": "Total value (€)",
+  "recording": "Recording...",
+  "record": "Record"
+}

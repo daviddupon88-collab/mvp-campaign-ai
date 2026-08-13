@@ -2,25 +2,27 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { useTranslations, useLocale } from 'next-intl';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { useCurrentUser, canApprove } from '@/lib/use-current-user';
 import { api, ApiError } from '@/lib/api';
 import { Nav } from '@/components/nav';
 import { Card, Button, Textarea, StatusPill, ScoreBar, Tabs, ErrorText } from '@/components/ui';
 import { UpgradeModal } from '@/components/upgrade-modal';
+import { INTL_TAGS, Locale } from '@/i18n/config';
 
-const GENERATION_STATUS_LABELS: Record<string, string> = {
-  PENDING: 'En attente', RUNNING: 'En cours', SUCCEEDED: 'Terminé', FAILED: 'Échec',
-};
+type DetailTab = 'overview' | 'content' | 'analytics' | 'optimizer';
 
 export default function CampaignDetailPage() {
   const ready = useRequireAuth();
   const { user } = useCurrentUser();
   const params = useParams();
   const campaignId = params.id as string;
+  const t = useTranslations('campaigns.detail');
+  const tErrors = useTranslations('errors');
 
   const [campaign, setCampaign] = useState<any>(null);
-  const [tab, setTab] = useState('Vue d\'ensemble');
+  const [tab, setTab] = useState<DetailTab>('overview');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -35,18 +37,37 @@ export default function CampaignDetailPage() {
     let cancelled = false;
 
     // Polling tant que la génération tourne en tâche de fond (worker BullMQ) — une fois
-    // READY_FOR_REVIEW/REJECTED atteint, plus besoin de rafraîchir automatiquement.
+    // READY_FOR_REVIEW/REJECTED atteint, plus besoin de rafraîchir automatiquement. Le
+    // try/catch est indispensable : sans lui, un échec réseau ponctuel (blip, token expiré)
+    // fait rejeter la promesse de `poll()` sans jamais être intercepté nulle part — le
+    // `setTimeout` suivant n'est alors jamais programmé, la boucle de polling s'arrête pour
+    // toujours et silencieusement, et si c'était le tout premier appel, `campaign` reste
+    // `null` indéfiniment : la page affiche un écran vide sans message d'erreur ni retry.
     async function poll() {
-      const data = await load();
-      if (!cancelled && (data.status === 'DRAFT' || data.status === 'IN_PROGRESS')) {
-        setTimeout(poll, 3000);
+      try {
+        const data = await load();
+        if (!cancelled && (data.status === 'DRAFT' || data.status === 'IN_PROGRESS')) {
+          setTimeout(poll, 3000);
+        }
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || tErrors('generic'));
       }
     }
     poll();
     return () => { cancelled = true; };
-  }, [ready, load]);
+  }, [ready, load, tErrors]);
 
-  if (!ready || !campaign) return null;
+  if (!ready) return null;
+  if (!campaign) {
+    return error ? (
+      <>
+        <Nav />
+        <main style={{ maxWidth: 820, margin: '40px auto', padding: '0 16px' }}>
+          <ErrorText message={error} />
+        </main>
+      </>
+    ) : null;
+  }
 
   async function handleApprove() {
     setBusy(true); setError(null);
@@ -56,10 +77,24 @@ export default function CampaignDetailPage() {
   }
 
   async function handleReject() {
-    const reason = prompt('Motif du rejet (5 caractères minimum) :');
+    const reason = prompt(t('review.rejectPrompt'));
     if (!reason) return;
     setBusy(true); setError(null);
     try { await api.rejectCampaign(campaignId, reason); await load(); }
+    catch (err: any) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function handleRetry() {
+    setBusy(true); setError(null);
+    try {
+      await api.regenerateCampaign(campaignId, {
+        name: campaign.name,
+        objective: campaign.objective ?? '',
+        productDescription: campaign.productDescription ?? '',
+      });
+      await load();
+    }
     catch (err: any) { setError(err.message); }
     finally { setBusy(false); }
   }
@@ -77,7 +112,7 @@ export default function CampaignDetailPage() {
               // eslint-disable-next-line @next/next/no-img-element -- photo produit hébergée par l'utilisateur/le stockage, pas un asset buildé
               <img
                 src={campaign.productImageUrl}
-                alt="Photo du produit"
+                alt={t('productPhotoAlt')}
                 style={{ width: 56, height: 56, borderRadius: 10, objectFit: 'cover', border: '1px solid var(--border)', flexShrink: 0 }}
               />
             )}
@@ -92,8 +127,7 @@ export default function CampaignDetailPage() {
         {isGenerating && (
           <Card style={{ marginBottom: 20 }}>
             <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>
-              L'orchestration IA est en cours (analyse → stratégie → copywriting → visuel)...
-              Cette page se rafraîchit automatiquement.
+              {t('generating')}
             </p>
           </Card>
         )}
@@ -101,12 +135,17 @@ export default function CampaignDetailPage() {
         <ErrorText message={error} />
 
         <Tabs
-          tabs={['Vue d\'ensemble', 'Contenu', 'Analytics', 'Optimisation']}
+          tabs={[
+            { key: 'overview', label: t('tabs.overview') },
+            { key: 'content', label: t('tabs.content') },
+            { key: 'analytics', label: t('tabs.analytics') },
+            { key: 'optimizer', label: t('tabs.optimizer') },
+          ]}
           active={tab}
-          onChange={setTab}
+          onChange={(next) => setTab(next as DetailTab)}
         />
 
-        {tab === 'Vue d\'ensemble' && (
+        {tab === 'overview' && (
           <OverviewTab
             campaign={campaign}
             canReview={canReview}
@@ -114,12 +153,13 @@ export default function CampaignDetailPage() {
             busy={busy}
             onApprove={handleApprove}
             onReject={handleReject}
+            onRetry={handleRetry}
             onPublished={load}
           />
         )}
-        {tab === 'Contenu' && <ContentStudioTab campaignId={campaignId} />}
-        {tab === 'Analytics' && <AnalyticsTab campaignId={campaignId} campaign={campaign} />}
-        {tab === 'Optimisation' && (
+        {tab === 'content' && <ContentStudioTab campaignId={campaignId} />}
+        {tab === 'analytics' && <AnalyticsTab campaignId={campaignId} campaign={campaign} />}
+        {tab === 'optimizer' && (
           <OptimizerTab campaignId={campaignId} campaign={campaign} canApproveRole={canApprove(user?.role)} onChange={load} />
         )}
       </main>
@@ -131,18 +171,21 @@ export default function CampaignDetailPage() {
 // Onglet Vue d'ensemble : générations IA, garde-fou modération + score de marque,
 // approbation/rejet, publication.
 // ---------------------------------------------------------------------------
-function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onReject, onPublished }: any) {
+function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onReject, onRetry, onPublished }: any) {
+  const t = useTranslations('campaigns.detail');
   return (
     <>
       <Card style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Générations IA</h2>
+        <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('generations.title')}</h2>
         {(!campaign.generations || campaign.generations.length === 0) && (
-          <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Aucune génération pour le moment.</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>{t('generations.empty')}</p>
         )}
         {campaign.generations?.map((g: any) => (
           <div key={g.id} style={{ padding: '10px 0', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
             <strong>{g.taskType}</strong>
-            <span style={{ color: 'var(--text-secondary)' }}>{GENERATION_STATUS_LABELS[g.status] ?? g.status} · {g.provider}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>
+              {t.has(`generations.status.${g.status}`) ? t(`generations.status.${g.status}` as any) : g.status} · {g.provider}
+            </span>
           </div>
         ))}
       </Card>
@@ -152,7 +195,7 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
       {canReview && (
         <Card style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 500, margin: 0 }}>Validation avant publication</h2>
+            <h2 style={{ fontSize: 15, fontWeight: 500, margin: 0 }}>{t('review.title')}</h2>
             {campaign.moderationVerdict && <StatusPill status={campaign.moderationVerdict} />}
           </div>
 
@@ -167,7 +210,7 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
           {campaign.brandConsistencyScore != null && (
             <div style={{ marginTop: 16 }}>
               <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                Cohérence de marque : <strong style={{ color: 'var(--text-primary)' }}>{campaign.brandConsistencyScore}/100</strong>
+                {t('review.brandConsistency')} <strong style={{ color: 'var(--text-primary)' }}>{campaign.brandConsistencyScore}/100</strong>
               </div>
               {campaign.brandConsistencyChecks?.map((b: any) => (
                 <ScoreBar key={b.id} label={b.label} value={b.score} />
@@ -177,15 +220,15 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
 
           <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
             <Button onClick={onApprove} disabled={busy || campaign.status === 'APPROVED' || !canApproveRole}>
-              {campaign.status === 'APPROVED' ? 'Approuvée ✓' : 'Approuver'}
+              {campaign.status === 'APPROVED' ? t('review.approved') : t('review.approve')}
             </Button>
             <Button variant="secondary" onClick={onReject} disabled={busy || campaign.status === 'APPROVED' || !canApproveRole}>
-              Rejeter
+              {t('review.reject')}
             </Button>
           </div>
           {!canApproveRole && (
             <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, marginBottom: 0 }}>
-              Réservé au rôle Marketing Manager et au-dessus.
+              {t('review.roleRestricted')}
             </p>
           )}
         </Card>
@@ -193,8 +236,17 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
 
       {campaign.status === 'REJECTED' && (
         <Card style={{ marginBottom: 16, borderColor: 'var(--accent-danger)' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-danger)', marginBottom: 4 }}>Campagne rejetée</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{campaign.rejectionReason}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-danger)', marginBottom: 4 }}>{t('rejected.title')}</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{campaign.rejectionReason}</div>
+          <Button variant="secondary" onClick={onRetry} disabled={busy}>{t('retry.button')}</Button>
+        </Card>
+      )}
+
+      {campaign.status === 'FAILED' && (
+        <Card style={{ marginBottom: 16, borderColor: 'var(--accent-danger)' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-danger)', marginBottom: 4 }}>{t('failed.title')}</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>{campaign.failureReason}</div>
+          <Button variant="secondary" onClick={onRetry} disabled={busy}>{t('retry.button')}</Button>
         </Card>
       )}
 
@@ -210,6 +262,7 @@ function OverviewTab({ campaign, canReview, canApproveRole, busy, onApprove, onR
 // et idempotente : republier ne crée jamais de doublon sur la plateforme réelle.
 // ---------------------------------------------------------------------------
 function PublishBlock({ campaignId, onPublished }: { campaignId: string; onPublished: () => void }) {
+  const t = useTranslations('campaigns.detail.publish');
   const [connections, setConnections] = useState<any[]>([]);
   const [publishing, setPublishing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -238,18 +291,18 @@ function PublishBlock({ campaignId, onPublished }: { campaignId: string; onPubli
   return (
     <Card>
       <UpgradeModal error={limitError} onClose={() => setLimitError(null)} />
-      <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Publication</h2>
+      <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('title')}</h2>
       <ErrorText message={error} />
       {connections.length === 0 ? (
         <p style={{ fontSize: 13.5, color: 'var(--text-secondary)' }}>
-          Aucun réseau social connecté pour le moment.
+          {t('empty')}
         </p>
       ) : (
         connections.map((c) => (
           <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
             <span style={{ fontSize: 13.5 }}>{c.platform} — {c.externalAccountName}</span>
             <Button onClick={() => publish(c.id)} disabled={publishing === c.id}>
-              {publishing === c.id ? 'Publication...' : 'Publier'}
+              {publishing === c.id ? t('publishing') : t('publish')}
             </Button>
           </div>
         ))
@@ -264,6 +317,9 @@ function PublishBlock({ campaignId, onPublished }: { campaignId: string; onPubli
 // significatif une fois la campagne PUBLISHED — cf. AnalyticsService côté backend.
 // ---------------------------------------------------------------------------
 function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: any }) {
+  const t = useTranslations('analytics');
+  const locale = useLocale();
+  const intlTag = INTL_TAGS[locale as Locale] ?? 'en-US';
   const [summary, setSummary] = useState<any>(null);
   const [channels, setChannels] = useState<any[]>([]);
   const [content, setContent] = useState<any[]>([]);
@@ -280,7 +336,7 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
   }, [campaignId, campaign.status]);
 
   if (campaign.status !== 'PUBLISHED') {
-    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Les statistiques ne sont disponibles qu'une fois la campagne publiée.</p></Card>;
+    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>{t('onlyPublished')}</p></Card>;
   }
 
   async function submitConversion(e: React.FormEvent) {
@@ -301,25 +357,25 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
 
       {summary && (
         <Card style={{ marginBottom: 16 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Vue d'ensemble</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('overview')}</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-            <Stat label="Impressions" value={summary.impressions?.toLocaleString('fr-FR') ?? '0'} />
-            <Stat label="CTR" value={summary.ctr != null ? `${summary.ctr.toFixed(1)}%` : '—'} />
-            <Stat label="CPA" value={summary.cpa != null ? `${summary.cpa.toFixed(2)}€` : '—'} />
-            <Stat label="ROAS" value={summary.roas != null ? `${summary.roas.toFixed(1)}x` : 'Non calculable'} />
+            <Stat label={t('impressions')} value={summary.impressions != null ? new Intl.NumberFormat(intlTag).format(summary.impressions) : '0'} />
+            <Stat label={t('ctr')} value={summary.ctr != null ? new Intl.NumberFormat(intlTag, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(summary.ctr / 100) : '—'} />
+            <Stat label={t('cpa')} value={summary.cpa != null ? `${summary.cpa.toFixed(2)}€` : '—'} />
+            <Stat label={t('roas')} value={summary.roas != null ? `${summary.roas.toFixed(1)}x` : t('roasUnavailable')} />
           </div>
           {summary.roas == null && (
             <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, marginBottom: 0 }}>
-              ROAS non calculable sans valeur de conversion enregistrée (cf. formulaire ci-dessous).
+              {t('roasHint')}
             </p>
           )}
         </Card>
       )}
 
       <Card style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Répartition par canal</h2>
+        <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('byChannel')}</h2>
         {channels.length === 0 ? (
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucune donnée pour le moment.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>{t('noData')}</p>
         ) : (
           channels.map((c: any) => (
             <div key={c.platform} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
@@ -331,10 +387,10 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
       </Card>
 
       <Card style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Répartition par créative</h2>
-        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -6, marginBottom: 10 }}>Quelle variation a réellement gagné.</p>
+        <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('byCreative')}</h2>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -6, marginBottom: 10 }}>{t('byCreativeHint')}</p>
         {content.length === 0 ? (
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Aucune donnée pour le moment.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>{t('noData')}</p>
         ) : (
           content.map((c: any, i: number) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
@@ -346,21 +402,21 @@ function AnalyticsTab({ campaignId, campaign }: { campaignId: string; campaign: 
       </Card>
 
       <Card>
-        <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Enregistrer une conversion</h2>
+        <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('recordConversion')}</h2>
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -6, marginBottom: 12 }}>
-          Aucun adaptateur ne remonte de conversions programmatiquement — code promo, UTM ou déclaration commerciale.
+          {t('recordConversionHint')}
         </p>
         <form onSubmit={submitConversion} style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <label style={{ fontSize: 12 }}>
-            <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>Nombre</span>
+            <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>{t('count')}</span>
             <input type="number" min={1} value={conversionCount} onChange={(e) => setConversionCount(e.target.value)} style={{ fontSize: 13, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', width: 90 }} />
           </label>
           <label style={{ fontSize: 12 }}>
-            <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>Valeur totale (€)</span>
+            <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>{t('totalValue')}</span>
             <input type="number" min={0} value={conversionValue} onChange={(e) => setConversionValue(e.target.value)} style={{ fontSize: 13, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-strong)', width: 110 }} />
           </label>
           <Button type="submit" disabled={savingConversion || !conversionCount || !conversionValue}>
-            {savingConversion ? 'Enregistrement...' : 'Enregistrer'}
+            {savingConversion ? t('recording') : t('record')}
           </Button>
         </form>
       </Card>
@@ -382,6 +438,8 @@ function Stat({ label, value }: { label: string; value: string }) {
 // édition (nouvelle version), variations A/B, sélection de la version courante.
 // ---------------------------------------------------------------------------
 function ContentStudioTab({ campaignId }: { campaignId: string }) {
+  const t = useTranslations('contentStudio');
+  const tCommon = useTranslations('common');
   const [pieces, setPieces] = useState<any[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -429,7 +487,7 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
   }
 
   if (pieces.length === 0) {
-    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Aucun contenu généré pour le moment — le Content Studio se peuple automatiquement dès que l'orchestration IA produit un résultat.</p></Card>;
+    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>{t('empty')}</p></Card>;
   }
 
   return (
@@ -442,46 +500,61 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
             <StatusPill status={piece.status} />
           </div>
 
-          {piece.currentVersion?.asset?.url && (
-            <img src={piece.currentVersion.asset.url} alt="" style={{ maxWidth: '100%', borderRadius: 8, marginBottom: 10 }} />
+          {piece.currentVersion?.asset?.url && piece.type === 'VIDEO' && (
+            <video controls src={piece.currentVersion.asset.url} style={{ maxWidth: '100%', borderRadius: 8, marginBottom: 10, background: 'var(--bg-raised)' }}>
+              {t('videoUnsupported')}
+            </video>
+          )}
+          {piece.currentVersion?.asset?.url && piece.type !== 'VIDEO' && (
+            // eslint-disable-next-line @next/next/no-img-element -- visuel généré par l'IA, hébergé dynamiquement, pas un asset buildé
+            <img src={piece.currentVersion.asset.url} alt={t('imageAlt', { channel: piece.channel })} style={{ maxWidth: '100%', borderRadius: 8, marginBottom: 10 }} />
           )}
 
           {editingId === piece.id ? (
             <>
               <Textarea value={draftBody} onChange={setDraftBody} rows={4} />
               <div style={{ display: 'flex', gap: 10 }}>
-                <Button onClick={() => saveEdit(piece.id)}>Enregistrer (nouvelle version)</Button>
-                <Button variant="secondary" onClick={() => setEditingId(null)}>Annuler</Button>
+                <Button onClick={() => saveEdit(piece.id)}>{t('saveNewVersion')}</Button>
+                <Button variant="secondary" onClick={() => setEditingId(null)}>{tCommon('actions.cancel')}</Button>
               </div>
             </>
           ) : (
             <>
-              <p style={{ fontSize: 13.5, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>{piece.currentVersion?.body}</p>
+              {piece.type !== 'VIDEO' && (
+                <p style={{ fontSize: 13.5, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>{piece.currentVersion?.body}</p>
+              )}
               <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-                <Button variant="secondary" onClick={() => { setEditingId(piece.id); setDraftBody(piece.currentVersion?.body ?? ''); }}>
-                  Éditer
-                </Button>
-                <Button variant="secondary" onClick={() => createVariation(piece.id, piece.currentVersion?.body ?? '')}>
-                  Créer une variation
-                </Button>
+                {/* Éditer/Créer une variation n'ont de sens que pour du texte — une vidéo n'a
+                    pas de corps éditable (cf. ContentStudioService.validateTextBody, qui
+                    refuse ces opérations côté API pour ne dépendre d'aucun garde-fou client). */}
+                {piece.type !== 'VIDEO' && (
+                  <>
+                    <Button variant="secondary" onClick={() => { setEditingId(piece.id); setDraftBody(piece.currentVersion?.body ?? ''); }}>
+                      {tCommon('actions.edit')}
+                    </Button>
+                    <Button variant="secondary" onClick={() => createVariation(piece.id, piece.currentVersion?.body ?? '')}>
+                      {t('createVariation')}
+                    </Button>
+                  </>
+                )}
                 <Button variant="secondary" onClick={() => setSchedulingId(schedulingId === piece.id ? null : piece.id)}>
-                  Planifier
+                  {t('schedule')}
                 </Button>
               </div>
               {schedulingId === piece.id && (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 10, padding: 12, background: 'var(--bg-raised)', borderRadius: 8 }}>
                   <label style={{ fontSize: 12 }}>
-                    <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>Canal connecté</span>
+                    <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>{t('connectedChannel')}</span>
                     <select value={scheduleConnectionId} onChange={(e) => setScheduleConnectionId(e.target.value)} style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border-strong)' }}>
-                      <option value="">Sélectionner...</option>
+                      <option value="">{t('selectPlaceholder')}</option>
                       {connections.map((c) => <option key={c.id} value={c.id}>{c.platform} — {c.externalAccountName}</option>)}
                     </select>
                   </label>
                   <label style={{ fontSize: 12 }}>
-                    <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>Date et heure</span>
+                    <span style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>{t('dateAndTime')}</span>
                     <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border-strong)' }} />
                   </label>
-                  <Button onClick={() => schedule(piece.id)}>Confirmer</Button>
+                  <Button onClick={() => schedule(piece.id)}>{t('confirm')}</Button>
                 </div>
               )}
             </>
@@ -491,16 +564,16 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
               variantGroup mais porte un label différent (cf. ContentVersion côté backend). */}
           {piece.versions?.length > 1 && (
             <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 6 }}>Versions</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 6 }}>{t('versions')}</div>
               {piece.versions.map((v: any) => (
                 <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', fontSize: 12 }}>
                   <span>
-                    {v.label ? `Variation ${v.label}` : `Version ${v.versionNumber}`}
-                    {v.id === piece.currentVersionId ? ' — actuelle' : ''}
+                    {v.label ? t('variationLabel', { label: v.label }) : t('versionLabel', { number: v.versionNumber })}
+                    {v.id === piece.currentVersionId ? ` — ${t('current')}` : ''}
                   </span>
                   {v.id !== piece.currentVersionId && (
                     <button onClick={() => selectVersion(piece.id, v.id)} style={{ fontSize: 11.5, background: 'none', border: 'none', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer' }}>
-                      Utiliser celle-ci
+                      {t('useThisVersion')}
                     </button>
                   )}
                 </div>
@@ -518,6 +591,7 @@ function ContentStudioTab({ campaignId }: { campaignId: string }) {
 // appliquer/écarter (réservé Marketing Manager+, jamais automatique).
 // ---------------------------------------------------------------------------
 function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
+  const t = useTranslations('campaigns.optimizer');
   const [optimizations, setOptimizations] = useState<any[]>(campaign.optimizationRecommendations ?? []);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -526,6 +600,13 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
   const load = useCallback(() => {
     api.listOptimizations(campaignId).then(setOptimizations).catch((err) => setError(err.message));
   }, [campaignId]);
+
+  // Sans cet effet, l'onglet n'affichait que l'instantané `campaign.optimizationRecommendations`
+  // reçu au chargement initial de la page — jamais rafraîchi au montage de cet onglet lui-même.
+  // Si le cron Optimizer nocturne (ou un autre onglet ouvert) a produit de nouvelles
+  // recommandations depuis, elles restaient invisibles tant que l'utilisateur ne déclenchait
+  // pas lui-même une action (runNow/review).
+  useEffect(() => { load(); }, [load]);
 
   async function runNow() {
     setRunning(true); setError(null);
@@ -547,7 +628,7 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
   }
 
   if (campaign.status !== 'PUBLISHED') {
-    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>L'Optimizer analyse les campagnes publiées — revenez ici une fois cette campagne diffusée.</p></Card>;
+    return <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>{t('onlyPublished')}</p></Card>;
   }
 
   return (
@@ -555,11 +636,11 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
       <UpgradeModal error={limitError} onClose={() => setLimitError(null)} />
       <ErrorText message={error} />
       <div style={{ marginBottom: 16 }}>
-        <Button onClick={runNow} disabled={running}>{running ? 'Analyse en cours...' : 'Lancer une analyse maintenant'}</Button>
+        <Button onClick={runNow} disabled={running}>{running ? t('running') : t('runNow')}</Button>
       </div>
 
       {optimizations.length === 0 ? (
-        <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>Aucune recommandation pour le moment.</p></Card>
+        <Card><p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: 0 }}>{t('empty')}</p></Card>
       ) : (
         optimizations.map((o: any) => (
           <Card key={o.id} style={{ marginBottom: 12 }}>
@@ -576,8 +657,8 @@ function OptimizerTab({ campaignId, campaign, canApproveRole, onChange }: any) {
             ))}
             {o.status === 'PENDING' && (
               <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-                <Button onClick={() => review(o.id, 'apply')} disabled={!canApproveRole}>Appliquer</Button>
-                <Button variant="secondary" onClick={() => review(o.id, 'dismiss')} disabled={!canApproveRole}>Écarter</Button>
+                <Button onClick={() => review(o.id, 'apply')} disabled={!canApproveRole}>{t('apply')}</Button>
+                <Button variant="secondary" onClick={() => review(o.id, 'dismiss')} disabled={!canApproveRole}>{t('dismiss')}</Button>
               </div>
             )}
           </Card>

@@ -30,7 +30,7 @@ export class MockProvider implements AiProvider {
     };
   }
 
-  async generateImage(params: GenerateImageParams): Promise<AiGenerationResult> {
+  async generateImage(_params: GenerateImageParams): Promise<AiGenerationResult> {
     const start = Date.now();
     await this.simulateLatency();
     return {
@@ -42,7 +42,7 @@ export class MockProvider implements AiProvider {
     };
   }
 
-  async generateVideo(params: GenerateVideoParams): Promise<AiGenerationResult> {
+  async generateVideo(_params: GenerateVideoParams): Promise<AiGenerationResult> {
     const start = Date.now();
     await this.simulateLatency();
     return {
@@ -83,7 +83,7 @@ export class MockProvider implements AiProvider {
     };
   }
 
-  async moderateText(text: string): Promise<ModerateTextResult> {
+  async moderateText(_text: string): Promise<ModerateTextResult> {
     await this.simulateLatency();
     return { flagged: false, categories: [] };
   }

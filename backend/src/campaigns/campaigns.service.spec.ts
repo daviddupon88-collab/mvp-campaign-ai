@@ -184,3 +184,59 @@ describe('CampaignsService — photo produit à la création', () => {
     );
   });
 });
+
+// Vérifie la correction de l'audit : avant cette correction, une campagne dont la
+// génération avait définitivement échoué (statut FAILED, cf. CampaignGenerationProcessor)
+// n'avait aucun moyen d'être relancée — seule REJECTED était acceptée par regenerate().
+describe('CampaignsService — relance après échec de génération (FAILED)', () => {
+  it('autorise regenerate() depuis le statut FAILED, pas seulement REJECTED', async () => {
+    const { service, campaignUpdate, queue } = buildService({
+      campaignFindFirst: { id: 'campaign-1', status: 'FAILED', channels: [], failureReason: 'Crédits IA insuffisants.' },
+    });
+
+    await service.regenerate('org-1', 'campaign-1', { name: 'Campagne', objective: 'Objectif' } as any);
+
+    expect(campaignUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'IN_PROGRESS', failureReason: null }) }),
+    );
+    expect(queue.add).toHaveBeenCalled();
+  });
+
+  it('refuse toujours regenerate() depuis un statut ni REJECTED ni FAILED (ex: APPROVED)', async () => {
+    const { service, campaignUpdate } = buildService({
+      campaignFindFirst: { id: 'campaign-1', status: 'APPROVED', channels: [] },
+    });
+
+    await expect(service.regenerate('org-1', 'campaign-1', { name: 'Campagne', objective: 'Objectif' } as any)).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(campaignUpdate).not.toHaveBeenCalled();
+  });
+
+  it('réutilise productDescription enregistrée sur la campagne quand aucune nouvelle description n\'est fournie', async () => {
+    const { service, queue } = buildService({
+      campaignFindFirst: { id: 'campaign-1', status: 'FAILED', channels: [], productDescription: 'Chaussures de running' },
+    });
+
+    await service.regenerate('org-1', 'campaign-1', { name: 'Campagne', objective: 'Objectif' } as any);
+
+    expect(queue.add).toHaveBeenCalledWith(
+      'generate',
+      expect.objectContaining({ productDescription: 'Chaussures de running' }),
+    );
+  });
+
+  it('une nouvelle productDescription fournie remplace l\'ancienne', async () => {
+    const { service, queue } = buildService({
+      campaignFindFirst: { id: 'campaign-1', status: 'FAILED', channels: [], productDescription: 'Ancienne description' },
+    });
+
+    await service.regenerate('org-1', 'campaign-1', {
+      name: 'Campagne',
+      objective: 'Objectif',
+      productDescription: 'Nouvelle description',
+    } as any);
+
+    expect(queue.add).toHaveBeenCalledWith('generate', expect.objectContaining({ productDescription: 'Nouvelle description' }));
+  });
+});

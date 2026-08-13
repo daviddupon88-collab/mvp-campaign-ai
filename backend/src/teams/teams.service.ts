@@ -2,10 +2,9 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException,
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { EntitlementsService } from '../plans/entitlements.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email/email.service';
 import { emailTemplates } from '../notifications/email/email-templates';
-import { roleLevel, isAtLeast } from '../common/role-hierarchy';
+import { roleLevel } from '../common/role-hierarchy';
 
 export interface TeamActor {
   userId: string;
@@ -24,7 +23,6 @@ export class TeamsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly entitlements: EntitlementsService,
-    private readonly notifications: NotificationsService,
     private readonly emailService: EmailService,
     private readonly config: ConfigService,
   ) {}

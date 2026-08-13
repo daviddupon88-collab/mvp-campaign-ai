@@ -25,6 +25,10 @@ function buildService(recommendationJson: unknown) {
   const prisma = {
     campaign: { findMany: campaignFindMany, findUnique: campaignFindUnique },
     optimizationRecommendation: { create: optimizationRecommendationCreate },
+    // Simule une transaction Prisma en exécutant simplement le callback avec le même mock —
+    // suffisant pour ces tests, qui ne visent pas à vérifier l'isolation transactionnelle
+    // elle-même (couverte séparément, cf. entitlements.service race condition).
+    $transaction: jest.fn((cb: any) => cb(prisma)),
   } as unknown as PrismaService;
 
   const generateText = jest.fn().mockResolvedValue({ content: JSON.stringify(recommendationJson), provider: 'anthropic', model: 'test', durationMs: 5 });
@@ -105,5 +109,33 @@ describe('AiOptimizerService — intégration Brand Brain (Phase 15)', () => {
 
     expect(count).toBe(1); // la campagne est bien comptée comme analysée malgré l'échec Brand Brain
     expect(optimizationRecommendationCreate).toHaveBeenCalled();
+  });
+});
+
+// Couvre la correction de l'audit : le plafond maxOptimizerRuns (essai gratuit) était
+// vérifié AVANT l'appel IA (potentiellement long) mais jamais re-vérifié atomiquement avec
+// la création de la recommandation — un cron nocturne et un déclenchement manuel concurrents
+// pouvaient tous deux passer le premier contrôle avant qu'aucun n'ait encore créé sa ligne.
+describe('AiOptimizerService — re-vérification transactionnelle du quota Optimizer', () => {
+  it('re-vérifie le quota DANS la transaction qui crée la recommandation (pas seulement avant l\'appel IA)', async () => {
+    const { service } = buildService({ performance: 'on_track', summary: 'Conforme', actions: [] });
+
+    await service.runForOrganization('org-1');
+
+    // Une fois avant l'appel IA (fail-fast), une fois dans la transaction juste avant create().
+    const entitlements = (service as any).entitlements as { assertOptimizerRunAvailable: jest.Mock };
+    expect(entitlements.assertOptimizerRunAvailable).toHaveBeenCalledTimes(2);
+  });
+
+  it('si le quota est atteint entre les deux vérifications, la recommandation n\'est jamais créée', async () => {
+    const { service, optimizationRecommendationCreate } = buildService({ performance: 'on_track', summary: 'Conforme', actions: [] });
+    const entitlements = (service as any).entitlements as { assertOptimizerRunAvailable: jest.Mock };
+    // 1er appel (avant l'IA) : OK. 2e appel (dans la transaction) : quota atteint entre-temps.
+    entitlements.assertOptimizerRunAvailable.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Quota Optimizer atteint'));
+
+    const count = await service.runForOrganization('org-1');
+
+    expect(count).toBe(0); // l'échec dans la transaction est capturé par le try/catch de runForOrganization
+    expect(optimizationRecommendationCreate).not.toHaveBeenCalled();
   });
 });

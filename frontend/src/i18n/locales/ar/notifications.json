@@ -1,0 +1,40 @@
+{
+  "success": {
+    "generic": "نجاح",
+    "saved": "تم الحفظ بنجاح",
+    "campaignGenerated": "تم إنشاء الحملة بنجاح."
+  },
+  "error": {
+    "generic": "حدث خطأ ما."
+  },
+  "warning": {
+    "generic": "تحذير"
+  },
+  "info": {
+    "generic": "معلومة"
+  },
+  "generation": {
+    "inProgress": "جارٍ الإنشاء...",
+    "failed": "فشل الإنشاء"
+  },
+  "video": {
+    "generating": "جارٍ إنشاء الفيديو...",
+    "ready": "الفيديو جاهز",
+    "failed": "فشل إنشاء الفيديو"
+  },
+  "publication": {
+    "published": "تم النشر بنجاح",
+    "failed": "فشل النشر"
+  },
+  "billing": {
+    "paymentFailed": "فشل الدفع",
+    "pastDue": "الدفع متأخر",
+    "renewed": "تم تجديد الاشتراك"
+  },
+  "credits": {
+    "low": "أرصدة الذكاء الاصطناعي الخاصة بك على وشك النفاد"
+  },
+  "authentication": {
+    "sessionExpired": "انتهت صلاحية جلستك، يرجى تسجيل الدخول مرة أخرى."
+  }
+}

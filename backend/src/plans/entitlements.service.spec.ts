@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EntitlementsService } from './entitlements.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -55,11 +55,26 @@ describe('EntitlementsService', () => {
       await expect(service.assertActiveSubscription('org-1')).rejects.toThrow(ForbiddenException);
     });
 
-    it('bloque une organisation sans aucun abonnement', async () => {
+    // Statut posé exclusivement par une action d'administration plateforme (abus, impayé
+    // au-delà du délai de grâce, investigation) — jamais par un webhook Stripe. Distinct de
+    // 'canceled' (résiliation décidée par le client lui-même). Jamais testé avant cette passe.
+    it('bloque un compte suspendu par l\'équipe Campaign-ai', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ status: 'suspended' });
+      const service = new EntitlementsService(prisma);
+      await expect(service.assertActiveSubscription('org-1')).rejects.toThrow(ForbiddenException);
+      await expect(service.assertActiveSubscription('org-1')).rejects.toThrow(/suspendu/);
+    });
+
+    // NotFoundException, pas ForbiddenException : corrigé pour que l'absence d'abonnement
+    // produise toujours le même code HTTP (404) que getCurrentPlan(), quel que soit le point
+    // d'entrée — avant ce correctif, cette même condition racine donnait un 403 ici mais un
+    // 404 via getCurrentPlan() (appelé par assertSeatAvailable, assertFeature, etc.).
+    it('bloque une organisation sans aucun abonnement (NotFoundException, alignée sur getCurrentPlan)', async () => {
       const prisma = buildPrismaMock();
       (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(null);
       const service = new EntitlementsService(prisma);
-      await expect(service.assertActiveSubscription('org-1')).rejects.toThrow(ForbiddenException);
+      await expect(service.assertActiveSubscription('org-1')).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -69,6 +84,13 @@ describe('EntitlementsService', () => {
       (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ aiCreditsUsed: 100, aiCreditsIncluded: 500, extraCredits: 0 });
       const service = new EntitlementsService(prisma);
       await expect(service.assertCreditsAvailable('org-1')).resolves.toBeUndefined();
+    });
+
+    it('bloque une organisation sans aucun abonnement (NotFoundException, même correction qu\'assertActiveSubscription)', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(null);
+      const service = new EntitlementsService(prisma);
+      await expect(service.assertCreditsAvailable('org-1')).rejects.toThrow(NotFoundException);
     });
 
     it('bloque quand le quota du plan ET le solde de packs sont tous deux épuisés', async () => {
@@ -185,7 +207,7 @@ describe('EntitlementsService', () => {
 
   // Plafonds dédiés de l'essai gratuit — cf. plan-catalog.ts (plan 'trial') : ces tests
   // utilisent le VRAI catalogue de plans (getPlan n'est pas mocké), pour vérifier les
-  // valeurs réelles annoncées commercialement (60 crédits, 10 images, 1 vidéo, 10
+  // valeurs réelles annoncées commercialement (300 crédits, 10 images, 1 vidéo, 10
   // publications, 1 analyse Optimizer, Meta/Instagram/LinkedIn uniquement).
   describe('plafonds dédiés du plan "trial"', () => {
     it('assertImageQuotaAvailable bloque à partir de 10 images générées', async () => {
@@ -321,6 +343,91 @@ describe('EntitlementsService', () => {
         expect(error.getResponse().recommendedPlan).toBeNull();
         expect(error.getResponse().message).toContain('contactez-nous');
       }
+    });
+  });
+
+  // Jamais testées avant cette passe (audit du 2026-08-13).
+  describe('assertFeature', () => {
+    it('autorise une fonctionnalité incluse dans le plan (apiAccess pour Business)', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'business' });
+      const service = new EntitlementsService(prisma);
+      await expect(service.assertFeature('org-1', 'apiAccess')).resolves.toBeUndefined();
+    });
+
+    it('bloque une fonctionnalité absente du plan (apiAccess pour Starter)', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'starter' });
+      const service = new EntitlementsService(prisma);
+      await expect(service.assertFeature('org-1', 'apiAccess')).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('assertChannelAvailable', () => {
+    it('bloque une demande de canaux simultanés au-delà du plafond du plan (essai : 3)', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+      const service = new EntitlementsService(prisma);
+      await expect(service.assertChannelAvailable('org-1', 4)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('autorise sous le plafond', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+      const service = new EntitlementsService(prisma);
+      await expect(service.assertChannelAvailable('org-1', 3)).resolves.toBeUndefined();
+    });
+
+    it('illimité sur les plans où maxChannels est null (ex: Growth)', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'growth' });
+      const service = new EntitlementsService(prisma);
+      await expect(service.assertChannelAvailable('org-1', 50)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('getUsageSummary', () => {
+    it('agrège sièges/campagnes/crédits/quotas dédiés en une seule vue, avec les bons libellés de limite par plan', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({
+        plan: 'trial', aiCreditsUsed: 120, aiCreditsIncluded: 300, extraCredits: 50,
+      });
+      (prisma.membership.count as jest.Mock).mockResolvedValue(2);
+      (prisma.invitation.count as jest.Mock).mockResolvedValue(1);
+      (prisma.campaign.count as jest.Mock).mockResolvedValue(2);
+      (prisma.aiGeneration.count as jest.Mock).mockResolvedValueOnce(5).mockResolvedValueOnce(1); // images puis vidéos
+      (prisma.publishedPost.count as jest.Mock).mockResolvedValue(3);
+      (prisma.optimizationRecommendation.count as jest.Mock).mockResolvedValue(0);
+      const service = new EntitlementsService(prisma);
+
+      const summary = await service.getUsageSummary('org-1');
+
+      expect(summary.plan.key).toBe('trial');
+      expect(summary.usage.seats).toEqual({ used: 3, limit: 2 }); // 2 membres + 1 invitation en attente
+      expect(summary.usage.activeCampaigns).toEqual({ used: 2, limit: 3 });
+      expect(summary.usage.aiCredits).toEqual({ used: 120, limit: 300 });
+      expect(summary.usage.extraCredits).toBe(50);
+      expect(summary.usage.images).toEqual({ used: 5, limit: 10 });
+      expect(summary.usage.videos).toEqual({ used: 1, limit: 1 });
+      expect(summary.usage.socialPosts).toEqual({ used: 3, limit: 10 });
+      expect(summary.usage.optimizerRuns).toEqual({ used: 0, limit: 1 });
+    });
+
+    it('ne plante pas sans abonnement (subscription null) : crédits à 0, pas une exception', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.membership.count as jest.Mock).mockResolvedValue(0);
+      (prisma.invitation.count as jest.Mock).mockResolvedValue(0);
+      (prisma.campaign.count as jest.Mock).mockResolvedValue(0);
+      (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(0);
+      (prisma.publishedPost.count as jest.Mock).mockResolvedValue(0);
+      (prisma.optimizationRecommendation.count as jest.Mock).mockResolvedValue(0);
+      const service = new EntitlementsService(prisma);
+
+      // getCurrentPlan() lève NotFoundException sans abonnement — getUsageSummary() en dépend
+      // via Promise.all, donc l'absence d'abonnement reste une 404 cohérente avec le reste du
+      // service (cf. items 83 de l'audit), pas un crash générique.
+      await expect(service.getUsageSummary('org-1')).rejects.toThrow(NotFoundException);
     });
   });
 });

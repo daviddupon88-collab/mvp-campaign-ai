@@ -18,6 +18,15 @@ enum Role {
   VIEWER
 }
 
+// Langue de l'interface (i18n) — indépendante de la langue utilisée pour générer une
+// campagne, qui reste un paramètre de campagne distinct. cf. SUPPORTED_LOCALES côté frontend.
+enum Locale {
+  en
+  de
+  fr
+  ar
+}
+
 enum CampaignStatus {
   DRAFT
   IN_PROGRESS
@@ -26,6 +35,11 @@ enum CampaignStatus {
   REJECTED
   PUBLISHED
   ARCHIVED
+  // Génération IA définitivement échouée (budget/crédits épuisés en cours de route, panne
+  // fournisseur persistant au-delà des tentatives BullMQ) — cf. CampaignGenerationProcessor.
+  // Avant l'ajout de cet état, une telle erreur laissait la campagne bloquée en IN_PROGRESS
+  // indéfiniment, sans aucun moyen de le représenter ni de le signaler à l'utilisateur.
+  FAILED
 }
 
 enum ContentType {
@@ -138,6 +152,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Préférence de langue de l'interface — jamais utilisée pour la langue de génération
+  // d'une campagne (paramètre indépendant, cf. CampaignsService). "en" par défaut : ne
+  // casse aucune ligne existante lors de la migration.
+  preferredLanguage Locale @default(en)
+
   // Distinct du RBAC par organisation (Membership.role) : un accès plateforme transverse,
   // hors du principe d'isolation multi-tenant, réservé à l'équipe opérant Campaign-ai elle-même
   // (support, ops) — jamais accordé automatiquement, cf. AdminModule.
@@ -217,6 +236,12 @@ model Campaign {
   // côté DTO, au moins l'un des deux est requis — cf. CampaignsService.create).
   productImageUrl String?
 
+  // Dénormalisé au même titre que productImageUrl — nécessaire pour permettre une relance
+  // fidèle (regenerate()) après un rejet ou un échec de génération sans redemander la
+  // description à l'utilisateur (avant cet ajout, seule la photo survivait à la création,
+  // la description texte était perdue après le premier passage dans l'Orchestrator).
+  productDescription String?
+
   // Garde-fous avant publication : validation humaine obligatoire + verdict de modération.
   // Le passage à PUBLISHED ne peut jamais sauter l'étape APPROVED (cf. PublishingService).
   moderationVerdict ModerationStatus?
@@ -224,6 +249,10 @@ model Campaign {
   approvedByEmail   String? // dénormalisé pour l'audit même si l'utilisateur est supprimé plus tard
   approvedAt        DateTime?
   rejectionReason   String?
+
+  // Renseigné uniquement quand status=FAILED — message lisible pour l'utilisateur (jamais
+  // une trace d'erreur technique brute), cf. CampaignGenerationProcessor.
+  failureReason String?
 
   // Score de cohérence de marque (0-100, moyenne des vérifications) — informatif, n'empêche
   // jamais l'approbation contrairement à moderationVerdict, mais s'affiche au validateur.
@@ -1012,6 +1041,7 @@ enum NotificationType {
   PAYMENT_FAILED
   TEAM_INVITATION
   SUPPORT_REPLY
+  CAMPAIGN_GENERATION_FAILED
 }
 
 // Notification in-app, doublée d'un envoi email best-effort (cf. NotificationsService) —

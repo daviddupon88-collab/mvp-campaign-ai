@@ -1,0 +1,20 @@
+{
+  "overview": "Vue d'ensemble",
+  "impressions": "Impressions",
+  "ctr": "CTR",
+  "cpa": "CPA",
+  "roas": "ROAS",
+  "roasUnavailable": "Non calculable",
+  "roasHint": "ROAS non calculable sans valeur de conversion enregistrée (cf. formulaire ci-dessous).",
+  "byChannel": "Répartition par canal",
+  "byCreative": "Répartition par créative",
+  "byCreativeHint": "Quelle variation a réellement gagné.",
+  "noData": "Aucune donnée pour le moment.",
+  "onlyPublished": "Les statistiques ne sont disponibles qu'une fois la campagne publiée.",
+  "recordConversion": "Enregistrer une conversion",
+  "recordConversionHint": "Aucun adaptateur ne remonte de conversions programmatiquement — code promo, UTM ou déclaration commerciale.",
+  "count": "Nombre",
+  "totalValue": "Valeur totale (€)",
+  "recording": "Enregistrement...",
+  "record": "Enregistrer"
+}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslations } from 'next-intl';
 
 export function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
@@ -91,9 +92,25 @@ export function Field({
   );
 }
 
+// role="alert" annonce le message aux lecteurs d'écran dès son insertion, sans action de
+// l'utilisateur. Le déplacement du focus clavier (tabIndex + focus() au montage) est un
+// second garde-fou complémentaire : sans lui, un utilisateur au clavier qui vient de soumettre
+// un formulaire en échec n'a aucune indication qu'une erreur est apparue — il doit la
+// découvrir par hasard en retabulant dans la page. Utilisé après CHAQUE échec de soumission
+// dans l'application (login, register, campagnes, paramètres...).
 export function ErrorText({ message }: { message: string | null }) {
+  const ref = React.useRef<HTMLParagraphElement>(null);
+
+  React.useEffect(() => {
+    if (message) ref.current?.focus();
+  }, [message]);
+
   if (!message) return null;
-  return <p style={{ color: 'var(--accent-danger)', fontSize: 13, marginTop: -8, marginBottom: 16 }}>{message}</p>;
+  return (
+    <p ref={ref} role="alert" tabIndex={-1} style={{ color: 'var(--accent-danger)', fontSize: 13, marginTop: -8, marginBottom: 16 }}>
+      {message}
+    </p>
+  );
 }
 
 export function Textarea({
@@ -156,7 +173,11 @@ const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
 };
 
 export function StatusPill({ status }: { status: string }) {
+  const t = useTranslations('common.statusLabels');
   const c = STATUS_COLORS[status] ?? { bg: 'var(--bg-raised)', fg: 'var(--text-secondary)' };
+  // Statuts inconnus (rôles, valeurs métier non listées dans common.statusLabels) : on
+  // retombe sur la donnée brute plutôt que d'afficher une clé de traduction manquante.
+  const label = t.has(status) ? t(status) : status.replace(/_/g, ' ');
   return (
     <span
       className="mono"
@@ -171,7 +192,7 @@ export function StatusPill({ status }: { status: string }) {
         whiteSpace: 'nowrap',
       }}
     >
-      {status.replace(/_/g, ' ')}
+      {label}
     </span>
   );
 }
@@ -191,26 +212,39 @@ export function ScoreBar({ label, value, max = 100 }: { label: string; value: nu
   );
 }
 
-export function Tabs({ tabs, active, onChange }: { tabs: string[]; active: string; onChange: (t: string) => void }) {
+type TabItem = string | { key: string; label: string };
+
+function tabKey(t: TabItem): string {
+  return typeof t === 'string' ? t : t.key;
+}
+function tabLabel(t: TabItem): string {
+  return typeof t === 'string' ? t : t.label;
+}
+
+// tabs accepte soit des chaînes brutes (clé = libellé affiché, historique), soit des objets
+// {key, label} — nécessaire dès que le libellé affiché est traduit et ne peut donc plus
+// servir de valeur stable pour l'état actif (cf. campaigns/[id] et admin, qui utilisent des
+// clés internes en anglais indépendantes de la langue de l'interface).
+export function Tabs({ tabs, active, onChange }: { tabs: TabItem[]; active: string; onChange: (t: string) => void }) {
   return (
     <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
       {tabs.map((t) => (
         <button
-          key={t}
-          onClick={() => onChange(t)}
+          key={tabKey(t)}
+          onClick={() => onChange(tabKey(t))}
           style={{
             padding: '10px 14px',
             fontSize: 13.5,
-            fontWeight: active === t ? 600 : 400,
+            fontWeight: active === tabKey(t) ? 600 : 400,
             background: 'none',
             border: 'none',
-            borderBottom: active === t ? '2px solid var(--accent-brand)' : '2px solid transparent',
-            color: active === t ? 'var(--text-primary)' : 'var(--text-secondary)',
+            borderBottom: active === tabKey(t) ? '2px solid var(--accent-brand)' : '2px solid transparent',
+            color: active === tabKey(t) ? 'var(--text-primary)' : 'var(--text-secondary)',
             cursor: 'pointer',
             marginBottom: -1,
           }}
         >
-          {t}
+          {tabLabel(t)}
         </button>
       ))}
     </div>

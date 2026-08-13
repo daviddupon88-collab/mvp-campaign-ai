@@ -7,6 +7,7 @@ export interface CurrentUser {
   id: string;
   email: string;
   isPlatformAdmin: boolean;
+  preferredLanguage: string;
   role: string; // rôle dans l'organisation courante
   currentOrganizationId: string;
   organizations: Array<{ id: string; name: string; role: string }>;
@@ -29,6 +30,7 @@ export function useCurrentUser() {
           id: data.user.id,
           email: data.user.email,
           isPlatformAdmin: data.user.isPlatformAdmin,
+          preferredLanguage: data.user.preferredLanguage ?? 'en',
           role: data.role,
           currentOrganizationId: data.currentOrganizationId,
           organizations: data.organizations,

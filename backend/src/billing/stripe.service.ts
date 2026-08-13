@@ -1,8 +1,8 @@
-import { Injectable, Logger, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
-import { PLAN_CATALOG, CREDIT_PACKS, getPlan } from '../plans/plan-catalog';
+import { CREDIT_PACKS, getPlan } from '../plans/plan-catalog';
 import { NotificationsService } from '../notifications/notifications.service';
 import { emailTemplates } from '../notifications/email/email-templates';
 

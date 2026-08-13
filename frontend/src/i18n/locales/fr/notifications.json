@@ -1,0 +1,40 @@
+{
+  "success": {
+    "generic": "Succès",
+    "saved": "Enregistré avec succès",
+    "campaignGenerated": "Campagne générée avec succès."
+  },
+  "error": {
+    "generic": "Une erreur est survenue."
+  },
+  "warning": {
+    "generic": "Avertissement"
+  },
+  "info": {
+    "generic": "Information"
+  },
+  "generation": {
+    "inProgress": "Génération en cours...",
+    "failed": "Échec de la génération"
+  },
+  "video": {
+    "generating": "Génération de la vidéo...",
+    "ready": "Vidéo prête",
+    "failed": "Échec de la génération vidéo"
+  },
+  "publication": {
+    "published": "Publié avec succès",
+    "failed": "Échec de la publication"
+  },
+  "billing": {
+    "paymentFailed": "Échec du paiement",
+    "pastDue": "Paiement en retard",
+    "renewed": "Abonnement renouvelé"
+  },
+  "credits": {
+    "low": "Vos crédits IA sont presque épuisés"
+  },
+  "authentication": {
+    "sessionExpired": "Votre session a expiré, veuillez vous reconnecter."
+  }
+}

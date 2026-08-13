@@ -1,0 +1,95 @@
+{
+  "appName": "Campaign-ai",
+  "actions": {
+    "save": "Save",
+    "saveChanges": "Save changes",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "remove": "Remove",
+    "edit": "Edit",
+    "confirm": "Confirm",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "retry": "Retry",
+    "search": "Search",
+    "send": "Send",
+    "resend": "Resend",
+    "revoke": "Revoke",
+    "upload": "Upload",
+    "publish": "Publish",
+    "reply": "Reply",
+    "seeMore": "See more"
+  },
+  "status": {
+    "loading": "Loading...",
+    "saving": "Saving...",
+    "sending": "Sending...",
+    "empty": "Nothing to show yet.",
+    "error": "Error",
+    "success": "Success"
+  },
+  "statusLabels": {
+    "DRAFT": "draft",
+    "ARCHIVED": "archived",
+    "PASSED": "passed",
+    "DONE": "done",
+    "APPROVED": "approved",
+    "PUBLISHED": "published",
+    "ACTIVE": "active",
+    "RESOLVED": "resolved",
+    "FLAGGED": "flagged",
+    "PENDING": "pending",
+    "READY_FOR_REVIEW": "ready for review",
+    "IN_PROGRESS": "in progress",
+    "OPEN": "open",
+    "SCHEDULED": "scheduled",
+    "BLOCKED": "blocked",
+    "REJECTED": "rejected",
+    "FAILED": "failed",
+    "SUSPENDED": "suspended",
+    "APPLIED": "applied",
+    "DISMISSED": "dismissed",
+    "CLOSED": "closed"
+  },
+  "help": {
+    "title": "Help center",
+    "searchPlaceholder": "Search...",
+    "noResults": "No article matches your search.",
+    "backToHelp": "← Back to help center"
+  },
+  "support": {
+    "title": "Support",
+    "newTicket": "New ticket",
+    "subject": "Subject",
+    "message": "Message",
+    "noTickets": "No tickets yet.",
+    "team": "Campaign-ai team",
+    "you": "You",
+    "ticketClosedResolved": "This ticket is resolved. Replying will reopen it.",
+    "ticketClosedClosed": "This ticket is closed. Replying will reopen it.",
+    "replyPlaceholder": "Your reply..."
+  },
+  "footer": {
+    "pricing": "Pricing"
+  },
+  "landing": {
+    "login": "Sign in",
+    "freeTrialCta": "14-day free trial",
+    "poweredBy": "powered by generative AI",
+    "heroTitle": "From your product to your complete marketing campaign.",
+    "heroSubtitle": "Campaign-ai analyzes your product, builds your strategy, generates your content and visuals, then helps you publish across your channels.",
+    "startFree": "Start for free",
+    "seeFeatures": "See features",
+    "trialNoCard": "14 days free · No credit card required",
+    "features": {
+      "aiAnalysis": { "title": "AI product analysis", "desc": "One photo is enough: AI detects category, price, strengths and USP automatically." },
+      "strategy": { "title": "Strategy & personas", "desc": "SMART objectives, detailed personas and positioning generated from your product." },
+      "multichannel": { "title": "Multichannel content", "desc": "Text, visuals and videos adapted to Facebook, Instagram, LinkedIn, TikTok and Google Ads." },
+      "humanReview": { "title": "Human review", "desc": "No publication without approval — moderation and brand consistency checked automatically." },
+      "optimization": { "title": "Continuous optimization", "desc": "Every night, AI analyzes your published campaigns and suggests measurable adjustments." },
+      "multiTeam": { "title": "Multi-team", "desc": "Invite your team, manage roles, track who approved what." }
+    }
+  }
+}

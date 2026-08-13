@@ -10,3 +10,5 @@ dist/
 /.devtools/
 /backend/uploads/
 /README.txt
+/Guide-actions-restantes.pdf
+*.tsbuildinfo

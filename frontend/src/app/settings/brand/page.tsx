@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { api } from '@/lib/api';
 import { Nav } from '@/components/nav';
 import { Card, Button, Field, Textarea, ErrorText } from '@/components/ui';
+import { INTL_TAGS, Locale } from '@/i18n/config';
 
 // Brand Brain V2 — au-delà de la charte déclarée (BrandKit, statique), cette page donne
 // désormais accès à la mémoire de marque qui s'enrichit réellement : apprentissages avec
@@ -15,6 +17,8 @@ import { Card, Button, Field, Textarea, ErrorText } from '@/components/ui';
 // les prompts de génération ; c'est corrigé (BrandContextBuilderService).
 export default function BrandBrainPage() {
   const ready = useRequireAuth();
+  const t = useTranslations('settings.brandBrain');
+  const tCommon = useTranslations('common');
   const [kit, setKit] = useState<any>(null);
   const [brief, setBrief] = useState<any>(null);
   const [memory, setMemory] = useState<any[]>([]);
@@ -120,7 +124,7 @@ export default function BrandBrainPage() {
     try {
       await action();
     } catch (err: any) {
-      setError(err.message ?? 'Action impossible');
+      setError(err.message ?? t('actions.actionFailed'));
     } finally {
       setActingId(null);
     }
@@ -150,38 +154,37 @@ export default function BrandBrainPage() {
     <>
       <Nav />
       <main style={{ maxWidth: 720, margin: '40px auto', padding: '0 16px' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Brand Brain</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 4 }}>{t('title')}</h1>
         <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginBottom: 24 }}>
-          Chaque génération IA (analyse, stratégie, copywriting) s'appuie sur cette identité et sur ce que Campaign-ai a appris —
-          plus elles sont complètes, plus les résultats sont cohérents avec votre marque.
+          {t('subtitle')}
         </p>
 
         <ErrorText message={error} />
 
         <Card style={{ marginBottom: 20 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Identité déclarée</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('declaredIdentity')}</h2>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
             <div style={{ width: 64, height: 64, borderRadius: 10, background: 'var(--bg-raised)', border: '1px solid var(--border)', backgroundImage: logoUrl ? `url(${logoUrl})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center', flexShrink: 0 }} />
             <div>
               <label style={{ display: 'inline-block', fontSize: 13, padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border-strong)', cursor: 'pointer' }}>
-                {uploadingLogo ? 'Envoi...' : 'Téléverser un logo'}
+                {uploadingLogo ? t('uploading') : t('uploadLogo')}
                 <input type="file" accept="image/*" onChange={handleLogoUpload} disabled={uploadingLogo} style={{ display: 'none' }} />
               </label>
-              <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '6px 0 0' }}>PNG, JPG ou SVG — stocké de façon permanente.</p>
+              <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '6px 0 0' }}>{t('logoHint')}</p>
             </div>
           </div>
 
-          <Field label="Ton éditorial" value={toneOfVoice} onChange={setToneOfVoice} placeholder="Ex: Direct, transparent, orienté résultats" />
-          <Field label="Mission" value={mission} onChange={setMission} placeholder="Pourquoi votre entreprise existe" />
-          <Field label="Vision" value={vision} onChange={setVision} placeholder="Où vous voulez emmener votre marché" />
-          <Textarea label="Arguments clés (un par ligne)" value={valuePropsText} onChange={setValuePropsText} rows={3} />
-          <Textarea label="Slogans existants (un par ligne)" value={slogansText} onChange={setSlogansText} rows={2} />
-          <Textarea label="Concurrents connus (un nom par ligne)" value={competitorsText} onChange={setCompetitorsText} rows={2} />
-          <Textarea label="Personas de référence (un nom par ligne)" value={personaNotesText} onChange={setPersonaNotesText} rows={2} placeholder="Ex: Responsable marketing PME" />
+          <Field label={t('toneLabel')} value={toneOfVoice} onChange={setToneOfVoice} placeholder={t('tonePlaceholder')} />
+          <Field label={t('missionLabel')} value={mission} onChange={setMission} placeholder={t('missionPlaceholder')} />
+          <Field label={t('visionLabel')} value={vision} onChange={setVision} placeholder={t('visionPlaceholder')} />
+          <Textarea label={t('valuePropsLabel')} value={valuePropsText} onChange={setValuePropsText} rows={3} />
+          <Textarea label={t('slogansLabel')} value={slogansText} onChange={setSlogansText} rows={2} />
+          <Textarea label={t('competitorsLabel')} value={competitorsText} onChange={setCompetitorsText} rows={2} />
+          <Textarea label={t('personasLabel')} value={personaNotesText} onChange={setPersonaNotesText} rows={2} placeholder={t('personasPlaceholder')} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Button onClick={save} disabled={saving}>{saving ? 'Enregistrement...' : 'Enregistrer'}</Button>
-            {saved && <span style={{ fontSize: 12.5, color: 'var(--accent-done)' }}>✓ Enregistré</span>}
+            <Button onClick={save} disabled={saving}>{saving ? t('saving') : tCommon('actions.save')}</Button>
+            {saved && <span style={{ fontSize: 12.5, color: 'var(--accent-done)' }}>{t('saved')}</span>}
           </div>
         </Card>
 
@@ -189,16 +192,16 @@ export default function BrandBrainPage() {
 
         {rules.length > 0 && (
           <Card style={{ marginBottom: 20 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Règles de marque</h2>
+            <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('rulesTitle')}</h2>
             <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: -8, marginBottom: 14 }}>
-              Contraintes non négociables — appliquées à chaque génération, et bloquées par du code en édition manuelle quand des termes interdits sont définis.
+              {t('rulesHint')}
             </p>
             {rules.map((r) => (
               <div key={r.id} style={{ padding: '10px 0', borderTop: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 13 }}>{r.content}</div>
                 {(r.metadata?.forbiddenTerms?.length ?? 0) > 0 && (
                   <div className="mono" style={{ fontSize: 11, color: 'var(--accent-danger)', marginTop: 4 }}>
-                    Termes interdits : {r.metadata.forbiddenTerms.join(', ')}
+                    {t('forbiddenTerms')} {r.metadata.forbiddenTerms.join(', ')}
                   </div>
                 )}
               </div>
@@ -207,13 +210,13 @@ export default function BrandBrainPage() {
         )}
 
         <Card style={{ marginBottom: 20 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Apprentissages & insights</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('insightsTitle')}</h2>
           <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: -8, marginBottom: 14 }}>
-            S'enrichissent automatiquement (publications, éditions manuelles, Optimizer) — chaque connaissance affiche pourquoi Campaign-ai pense cela.
+            {t('insightsHint')}
           </p>
           {memory.length === 0 ? (
             <p style={{ fontSize: 13.5, color: 'var(--text-secondary)' }}>
-              Aucun apprentissage pour le moment — la mémoire se remplit après votre première campagne publiée ou éditée.
+              {t('insightsEmpty')}
             </p>
           ) : (
             memory.map((m) => (
@@ -237,9 +240,9 @@ export default function BrandBrainPage() {
 
         {contradictions.length > 0 && (
           <Card>
-            <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>Contradictions détectées</h2>
+            <h2 style={{ fontSize: 15, fontWeight: 500, marginTop: 0 }}>{t('contradictionsTitle')}</h2>
             <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: -8, marginBottom: 14 }}>
-              Deux connaissances en désaccord ne sont jamais injectées ensemble dans un prompt tant qu'elles ne sont pas résolues.
+              {t('contradictionsHint')}
             </p>
             {contradictions.map((c) => (
               <ContradictionRow key={c.id} contradiction={c} acting={actingId === c.id} onResolve={(res) => handleResolve(c.id, res)} />
@@ -252,28 +255,30 @@ export default function BrandBrainPage() {
 }
 
 function ConfidenceBadge({ score }: { score: number }) {
+  const t = useTranslations('settings.brandBrain');
   const pct = Math.round(score * 100);
   const color = pct >= 70 ? 'var(--accent-done)' : pct >= 40 ? 'var(--accent-signal)' : 'var(--text-muted)';
   return (
     <span className="mono" style={{ fontSize: 11, color, border: `1px solid ${color}`, borderRadius: 20, padding: '2px 8px' }}>
-      confiance {pct}%
+      {t('confidence', { percent: pct })}
     </span>
   );
 }
 
 function BriefCard({ brief }: { brief: any }) {
+  const t = useTranslations('settings.brandBrain');
   return (
     <Card style={{ marginBottom: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 500, margin: 0 }}>Résumé de marque</h2>
+        <h2 style={{ fontSize: 15, fontWeight: 500, margin: 0 }}>{t('briefTitle')}</h2>
         {brief.globalConfidenceAverage !== null && <ConfidenceBadge score={brief.globalConfidenceAverage} />}
       </div>
 
-      {brief.positioning && <p style={{ fontSize: 13, marginTop: 0 }}><strong>Positionnement :</strong> {brief.positioning}</p>}
+      {brief.positioning && <p style={{ fontSize: 13, marginTop: 0 }}><strong>{t('positioning')}</strong> {brief.positioning}</p>}
 
       {brief.winningPatterns.length > 0 && (
         <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 12, color: 'var(--accent-done)', fontWeight: 600, marginBottom: 4 }}>Winning patterns</div>
+          <div style={{ fontSize: 12, color: 'var(--accent-done)', fontWeight: 600, marginBottom: 4 }}>{t('winningPatterns')}</div>
           {brief.winningPatterns.map((p: any, i: number) => (
             <div key={i} style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>• {p.content}</div>
           ))}
@@ -282,7 +287,7 @@ function BriefCard({ brief }: { brief: any }) {
 
       {brief.losingPatterns.length > 0 && (
         <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 12, color: 'var(--accent-danger)', fontWeight: 600, marginBottom: 4 }}>Losing patterns</div>
+          <div style={{ fontSize: 12, color: 'var(--accent-danger)', fontWeight: 600, marginBottom: 4 }}>{t('losingPatterns')}</div>
           {brief.losingPatterns.map((p: any, i: number) => (
             <div key={i} style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>• {p.content}</div>
           ))}
@@ -293,7 +298,7 @@ function BriefCard({ brief }: { brief: any }) {
         <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
           {brief.topChannels.length > 0 && (
             <div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Canaux les plus documentés</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>{t('topChannels')}</div>
               {brief.topChannels.map((c: any) => (
                 <div key={c.channel} className="mono" style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{c.channel} — {Math.round(c.averageConfidence * 100)}%</div>
               ))}
@@ -301,7 +306,7 @@ function BriefCard({ brief }: { brief: any }) {
           )}
           {brief.topPersonas.length > 0 && (
             <div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Personas les plus documentés</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>{t('topPersonas')}</div>
               {brief.topPersonas.map((p: any) => (
                 <div key={p.persona} className="mono" style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{p.persona} — {Math.round(p.averageConfidence * 100)}%</div>
               ))}
@@ -312,7 +317,7 @@ function BriefCard({ brief }: { brief: any }) {
 
       {brief.contradictionsCount > 0 && (
         <p style={{ fontSize: 12, color: 'var(--accent-signal)', marginBottom: 0, marginTop: 10 }}>
-          {brief.contradictionsCount} contradiction{brief.contradictionsCount > 1 ? 's' : ''} non résolue{brief.contradictionsCount > 1 ? 's' : ''}
+          {t('contradictionsRemaining', { count: brief.contradictionsCount })}
         </p>
       )}
     </Card>
@@ -326,11 +331,15 @@ function MemoryEntryRow({
   onConfirm: () => void; onDismiss: () => void; onPromote: () => void;
   onStartEdit: () => void; onCancelEdit: () => void; onSaveEdit: () => void;
 }) {
+  const t = useTranslations('settings.brandBrain');
+  const tCommon = useTranslations('common');
+  const locale = useLocale();
+  const intlTag = INTL_TAGS[locale as Locale] ?? 'en-US';
   const explain = [
-    `${entry.evidenceCount} observation${entry.evidenceCount > 1 ? 's' : ''}`,
-    entry.positiveSignals || entry.negativeSignals ? `${entry.positiveSignals} positive(s) / ${entry.negativeSignals} négative(s)` : null,
-    entry.channel ? `canal : ${entry.channel}` : null,
-    entry.persona ? `persona : ${entry.persona}` : null,
+    t('observations', { count: entry.evidenceCount }),
+    entry.positiveSignals || entry.negativeSignals ? t('positiveNegative', { positive: entry.positiveSignals, negative: entry.negativeSignals }) : null,
+    entry.channel ? t('channelLabel', { channel: entry.channel }) : null,
+    entry.persona ? t('personaLabel', { persona: entry.persona }) : null,
     entry.category ? entry.category.toLowerCase() : null,
   ].filter(Boolean).join(' · ');
 
@@ -338,7 +347,7 @@ function MemoryEntryRow({
     <div style={{ padding: '12px 0', borderTop: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 4 }}>
         <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-          {entry.type.toLowerCase()} · {new Date(entry.lastObservedAt ?? entry.createdAt).toLocaleDateString('fr-FR')}
+          {entry.type.toLowerCase()} · {new Date(entry.lastObservedAt ?? entry.createdAt).toLocaleDateString(intlTag)}
         </div>
         <ConfidenceBadge score={entry.confidenceScore} />
       </div>
@@ -361,15 +370,15 @@ function MemoryEntryRow({
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         {editing ? (
           <>
-            <ActionLink label="Enregistrer" onClick={onSaveEdit} disabled={acting} />
-            <ActionLink label="Annuler" onClick={onCancelEdit} disabled={acting} />
+            <ActionLink label={tCommon('actions.save')} onClick={onSaveEdit} disabled={acting} />
+            <ActionLink label={tCommon('actions.cancel')} onClick={onCancelEdit} disabled={acting} />
           </>
         ) : (
           <>
-            <ActionLink label="Confirmer" onClick={onConfirm} disabled={acting} color="var(--accent-done)" />
-            <ActionLink label="Rejeter" onClick={onDismiss} disabled={acting} color="var(--accent-danger)" />
-            <ActionLink label="Modifier" onClick={onStartEdit} disabled={acting} />
-            <ActionLink label="Promouvoir en règle" onClick={onPromote} disabled={acting} color="var(--accent-brand)" />
+            <ActionLink label={t('actions.confirm')} onClick={onConfirm} disabled={acting} color="var(--accent-done)" />
+            <ActionLink label={t('actions.reject')} onClick={onDismiss} disabled={acting} color="var(--accent-danger)" />
+            <ActionLink label={t('actions.edit')} onClick={onStartEdit} disabled={acting} />
+            <ActionLink label={t('actions.promote')} onClick={onPromote} disabled={acting} color="var(--accent-brand)" />
           </>
         )}
       </div>
@@ -378,19 +387,20 @@ function MemoryEntryRow({
 }
 
 function ContradictionRow({ contradiction, acting, onResolve }: { contradiction: any; acting: boolean; onResolve: (r: 'RESOLVED_A' | 'RESOLVED_B' | 'CONTEXT_DEPENDENT') => void }) {
+  const t = useTranslations('settings.brandBrain');
   const unresolved = contradiction.resolutionStatus === 'UNRESOLVED';
   return (
     <div style={{ padding: '12px 0', borderTop: '1px solid var(--border)' }}>
       <div className="mono" style={{ fontSize: 11, color: unresolved ? 'var(--accent-danger)' : 'var(--text-muted)', marginBottom: 6 }}>
-        {unresolved ? 'non résolue' : contradiction.resolutionStatus.toLowerCase()}
+        {unresolved ? t('unresolved') : contradiction.resolutionStatus.toLowerCase()}
       </div>
       <div style={{ fontSize: 13, marginBottom: 4 }}>A — {contradiction.knowledgeA?.content}</div>
       <div style={{ fontSize: 13, marginBottom: 8 }}>B — {contradiction.knowledgeB?.content}</div>
       {unresolved && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <ActionLink label="Retenir A" onClick={() => onResolve('RESOLVED_A')} disabled={acting} color="var(--accent-brand)" />
-          <ActionLink label="Retenir B" onClick={() => onResolve('RESOLVED_B')} disabled={acting} color="var(--accent-brand)" />
-          <ActionLink label="Contexte différent (garder les deux)" onClick={() => onResolve('CONTEXT_DEPENDENT')} disabled={acting} />
+          <ActionLink label={t('keepA')} onClick={() => onResolve('RESOLVED_A')} disabled={acting} color="var(--accent-brand)" />
+          <ActionLink label={t('keepB')} onClick={() => onResolve('RESOLVED_B')} disabled={acting} color="var(--accent-brand)" />
+          <ActionLink label={t('keepBoth')} onClick={() => onResolve('CONTEXT_DEPENDENT')} disabled={acting} />
         </div>
       )}
     </div>

@@ -224,7 +224,16 @@ export class AiGatewayService {
   private async buildAttemptOrder(taskType: TaskType, providerName?: string): Promise<string[]> {
     if (this.useMock()) return ['mock'];
 
-    const baseChain = this.fallbackChains[taskType];
+    // Correction de l'audit : 'mock' figurait dans fallbackChains pour TOUS les types de
+    // tâche (texte, image, vidéo, vision), donc restait un repli valide même en production
+    // (AI_MODE != 'mock') dès que les vrais fournisseurs échouaient tous. Conséquence
+    // concrète pour la vidéo : un échec de Google Veo (token expiré, quota, panne) basculait
+    // silencieusement sur une URL factice (https://example.com/mock-video.mp4), facturée
+    // 150 crédits et marquée SUCCEEDED, indiscernable d'une vraie vidéo pour le validateur.
+    // Le mock ne doit JAMAIS servir de contenu final hors développement/tests explicites
+    // (AI_MODE=mock, cas traité juste au-dessus) — un échec réel doit remonter comme tel,
+    // géré par CampaignGenerationProcessor (statut FAILED, retry) plutôt que masqué.
+    const baseChain = this.fallbackChains[taskType].filter((p) => p !== 'mock');
     const chain = providerName ? [providerName, ...baseChain.filter((p) => p !== providerName)] : [...baseChain];
 
     return this.reliabilityAdjustedOrder(chain);

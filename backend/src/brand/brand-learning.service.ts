@@ -213,6 +213,23 @@ export class BrandLearningService {
   // mal formulée par l'observation automatique ; seuls les champs fournis sont modifiés.
   async correctEntry(organizationId: string, entryId: string, params: CorrectEntryParams) {
     await this.findOwnedEntry(organizationId, entryId);
-    return this.prisma.brandMemoryEntry.update({ where: { id: entryId }, data: { ...params } });
+    const updated = await this.prisma.brandMemoryEntry.update({ where: { id: entryId }, data: { ...params } });
+
+    // Correction de l'audit : recordObservation() relance déjà systématiquement le scan de
+    // contradictions après écriture, mais correctEntry() (correction humaine manuelle,
+    // Phase 13) ne le faisait jamais — une correction pouvait rendre une entrée ACTIVE
+    // contradictoire avec une autre sans que personne ne le détecte, les deux restant
+    // éligibles à être injectées ensemble dans le même prompt (cf. BrandMemoryQueryService).
+    // Best-effort, même principe que recordObservation : un bug de détection ne doit jamais
+    // faire échouer la correction elle-même.
+    if (updated.category) {
+      try {
+        await this.contradictions.scanForContradictions(organizationId, updated.id, updated.category);
+      } catch (error) {
+        this.logger.warn(`Scan de contradictions échoué pour l'entrée corrigée ${updated.id}, correction conservée : ${error}`);
+      }
+    }
+
+    return updated;
   }
 }

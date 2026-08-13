@@ -1,0 +1,40 @@
+{
+  "success": {
+    "generic": "Success",
+    "saved": "Saved successfully",
+    "campaignGenerated": "Campaign generated successfully."
+  },
+  "error": {
+    "generic": "Something went wrong."
+  },
+  "warning": {
+    "generic": "Warning"
+  },
+  "info": {
+    "generic": "Info"
+  },
+  "generation": {
+    "inProgress": "Generation in progress...",
+    "failed": "Generation failed"
+  },
+  "video": {
+    "generating": "Generating video...",
+    "ready": "Video ready",
+    "failed": "Video generation failed"
+  },
+  "publication": {
+    "published": "Published successfully",
+    "failed": "Publication failed"
+  },
+  "billing": {
+    "paymentFailed": "Payment failed",
+    "pastDue": "Payment past due",
+    "renewed": "Subscription renewed"
+  },
+  "credits": {
+    "low": "Your AI credits are running low"
+  },
+  "authentication": {
+    "sessionExpired": "Your session has expired, please sign in again."
+  }
+}

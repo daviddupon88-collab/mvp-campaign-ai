@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useRequireAuth } from '@/lib/use-require-auth';
 import { api, ApiError } from '@/lib/api';
 import { Nav } from '@/components/nav';
@@ -25,6 +26,7 @@ const AVAILABLE_CHANNELS = [
 export default function NewCampaignPage() {
   const ready = useRequireAuth();
   const router = useRouter();
+  const t = useTranslations('campaigns.new');
 
   const [templates, setTemplates] = useState<any[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(null);
@@ -80,7 +82,7 @@ export default function NewCampaignPage() {
       const asset = await api.uploadAsset(file);
       setPhotoAsset({ id: asset.id, url: asset.url });
     } catch (err: any) {
-      setPhotoError(err.message ?? "Échec de l'envoi de la photo");
+      setPhotoError(err.message ?? t('photoUploadError'));
       setPhotoPreviewUrl(null);
     } finally {
       setUploadingPhoto(false);
@@ -100,7 +102,7 @@ export default function NewCampaignPage() {
     // Miroir du contrôle serveur (CampaignsService.create) : au moins l'un des deux est
     // requis, jamais aucun — mais la vérification échoue vite ici, avant tout appel réseau.
     if (!productDescription.trim() && !photoAsset) {
-      setError('Ajoutez une photo du produit ou décrivez-le — au moins l\'un des deux est nécessaire.');
+      setError(t('missingPhotoOrDescription'));
       return;
     }
 
@@ -124,7 +126,7 @@ export default function NewCampaignPage() {
       if (err instanceof ApiError && err.isPlanLimit) {
         setLimitError(err);
       } else {
-        setError(err.message ?? 'Échec de la création');
+        setError(err.message ?? t('genericError'));
       }
     } finally {
       setLoading(false);
@@ -136,22 +138,25 @@ export default function NewCampaignPage() {
       <Nav />
       <UpgradeModal error={limitError} onClose={() => setLimitError(null)} />
       <main style={{ maxWidth: 620, margin: '40px auto', padding: '0 16px' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>Nouvelle campagne</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 500, marginBottom: 24 }}>{t('title')}</h1>
 
         {!templateChosen ? (
           <>
             <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginTop: 0, marginBottom: 16 }}>
-              Un template guide la génération (objectif, ton, angle) sans rien figer — vous
-              pourrez tout ajuster à l'étape suivante.
+              {t('templateIntro')}
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
-              {templates.map((t) => (
-                <Card key={t.id} style={{ padding: 16, cursor: 'pointer' }}>
-                  <div onClick={() => chooseTemplate(t)}>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4 }}>{t.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t.sector}</div>
-                    {t.description && <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{t.description}</div>}
-                  </div>
+              {templates.map((tpl) => (
+                <Card key={tpl.id} style={{ padding: 16, cursor: 'pointer' }}>
+                  <button
+                    type="button"
+                    onClick={() => chooseTemplate(tpl)}
+                    style={{ display: 'block', width: '100%', textAlign: 'start', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer' }}
+                  >
+                    <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4 }}>{tpl.name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{tpl.sector}</div>
+                    {tpl.description && <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{tpl.description}</div>}
+                  </button>
                 </Card>
               ))}
             </div>
@@ -159,7 +164,7 @@ export default function NewCampaignPage() {
               onClick={() => chooseTemplate(null)}
               style={{ fontSize: 13, background: 'none', border: 'none', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer' }}
             >
-              Partir d'une page blanche, sans template
+              {t('blankTemplate')}
             </button>
           </>
         ) : (
@@ -169,30 +174,30 @@ export default function NewCampaignPage() {
               onClick={() => setTemplateChosen(false)}
               style={{ fontSize: 12.5, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', marginBottom: 12, padding: 0 }}
             >
-              ← Changer de template
+              {t('changeTemplate')}
             </button>
             <form onSubmit={handleSubmit}>
-              <Field label="Nom de la campagne" value={name} onChange={setName} required />
+              <Field label={t('nameLabel')} value={name} onChange={setName} required />
 
               <label style={{ display: 'block', marginBottom: 16 }}>
                 <span style={{ display: 'block', fontSize: 13, marginBottom: 8, color: 'var(--text-secondary)' }}>
-                  Photo du produit — une photo suffit : l'IA détecte catégorie, prix, forces et USP automatiquement
+                  {t('photoLabel')}
                 </span>
                 {photoPreviewUrl ? (
                   <div style={{ border: '1px solid var(--border-strong)', borderRadius: 8, overflow: 'hidden' }}>
                     {/* eslint-disable-next-line @next/next/no-img-element -- aperçu local avant upload, pas un asset optimisable par next/image */}
-                    <img src={photoPreviewUrl} alt="Aperçu de la photo produit" style={{ width: '100%', maxHeight: 220, objectFit: 'cover', display: 'block' }} />
+                    <img src={photoPreviewUrl} alt={t('photoPreviewAlt')} style={{ width: '100%', maxHeight: 220, objectFit: 'cover', display: 'block' }} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-raised)', fontSize: 12.5, color: 'var(--text-secondary)' }}>
-                      <span>{uploadingPhoto ? 'Envoi en cours...' : photoAsset ? 'Photo envoyée' : ''}</span>
+                      <span>{uploadingPhoto ? t('photoUploading') : photoAsset ? t('photoUploaded') : ''}</span>
                       <button type="button" onClick={removePhoto} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer', textDecoration: 'underline' }}>
-                        Retirer
+                        {t('removePhoto')}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div style={{ position: 'relative', border: '1.5px dashed var(--border-strong)', borderRadius: 8, padding: 28, textAlign: 'center', cursor: 'pointer' }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4 }}>Glissez une photo ou cliquez pour téléverser</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>JPG, PNG — optionnel si une description est fournie ci-dessous</div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4 }}>{t('photoDropzoneTitle')}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t('photoDropzoneHint')}</div>
                     <input
                       type="file"
                       accept="image/*"
@@ -205,28 +210,28 @@ export default function NewCampaignPage() {
               </label>
 
               <Field
-                label="Description du produit (optionnelle si une photo est fournie)"
+                label={t('descriptionLabel')}
                 value={productDescription}
                 onChange={setProductDescription}
-                placeholder="Ex: application mobile de fitness avec coaching IA personnalisé"
+                placeholder={t('descriptionPlaceholder')}
               />
               <Field
-                label="Objectif"
+                label={t('objectiveLabel')}
                 value={objective}
                 onChange={setObjective}
                 required
-                placeholder="Ex: générer 500 leads qualifiés en 30 jours"
+                placeholder={t('objectivePlaceholder')}
               />
-              <Field label="Budget (optionnel)" type="number" value={budget} onChange={setBudget} />
+              <Field label={t('budgetLabel')} type="number" value={budget} onChange={setBudget} />
 
               {/* <div>, pas <label> : ce groupe contient plusieurs boutons de bascule, pas un
                   champ de formulaire unique. Un <label> enveloppant plusieurs contrôles fait
                   fuiter tout son texte dans le nom accessible de CHAQUE bouton (calcul ARIA
                   du navigateur) — cassant à la fois les lecteurs d'écran et tout sélecteur par
                   rôle/nom (ex: tests). */}
-              <div style={{ marginBottom: 16 }} role="group" aria-label="Canaux">
+              <div style={{ marginBottom: 16 }} role="group" aria-label={t('channelsGroupLabel')}>
                 <span style={{ display: 'block', fontSize: 13, marginBottom: 8, color: 'var(--text-secondary)' }}>
-                  Canaux — chacun reçoit un contenu généré spécifiquement pour lui, pas un texte partagé
+                  {t('channelsLabel')}
                 </span>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {AVAILABLE_CHANNELS.map((c) => {
@@ -253,14 +258,14 @@ export default function NewCampaignPage() {
                 </div>
                 {selectedChannels.length === 0 && (
                   <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, marginBottom: 0 }}>
-                    Aucun canal sélectionné : un contenu générique unique sera généré.
+                    {t('noChannelSelected')}
                   </p>
                 )}
               </div>
 
               <ErrorText message={error} />
               <Button type="submit" disabled={loading || uploadingPhoto}>
-                {loading ? 'Lancement...' : uploadingPhoto ? 'Envoi de la photo...' : 'Générer la campagne'}
+                {loading ? t('launching') : uploadingPhoto ? t('uploadingPhoto') : t('generate')}
               </Button>
             </form>
           </Card>

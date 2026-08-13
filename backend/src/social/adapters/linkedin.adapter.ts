@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import {
   SocialAdapter,
   OAuthAuthorizeParams,
@@ -42,7 +43,7 @@ export class LinkedInAdapter implements SocialAdapter {
   }
 
   async exchangeCodeForToken({ code, redirectUri }: OAuthCallbackParams): Promise<OAuthTokenResult> {
-    const res = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
+    const res = await fetchWithTimeout('https://www.linkedin.com/oauth/v2/accessToken', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -57,7 +58,7 @@ export class LinkedInAdapter implements SocialAdapter {
     const data = await res.json();
 
     // Récupère l'organisation (Page entreprise) administrée par l'utilisateur.
-    const orgRes = await fetch(
+    const orgRes = await fetchWithTimeout(
       'https://api.linkedin.com/v2/organizationalEntityAcls?q=roleAssignee&role=ADMINISTRATOR',
       { headers: { Authorization: `Bearer ${data.access_token}` } },
     );
@@ -76,7 +77,7 @@ export class LinkedInAdapter implements SocialAdapter {
   }
 
   async refreshAccessToken(refreshToken: string): Promise<OAuthTokenResult> {
-    const res = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
+    const res = await fetchWithTimeout('https://www.linkedin.com/oauth/v2/accessToken', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -98,7 +99,7 @@ export class LinkedInAdapter implements SocialAdapter {
   }
 
   async publish({ accessToken, externalAccountId, caption, linkUrl }: PublishContentParams): Promise<PublishResult> {
-    const res = await fetch('https://api.linkedin.com/v2/ugcPosts', {
+    const res = await fetchWithTimeout('https://api.linkedin.com/v2/ugcPosts', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -134,7 +135,7 @@ export class LinkedInAdapter implements SocialAdapter {
     const params = new URLSearchParams({ q: 'organizationalEntity', organizationalEntity: externalAccountId });
     params.append('shares[0]', externalPostId);
 
-    const res = await fetch(`https://api.linkedin.com/v2/organizationalEntityShareStatistics?${params.toString()}`, {
+    const res = await fetchWithTimeout(`https://api.linkedin.com/v2/organizationalEntityShareStatistics?${params.toString()}`, {
       headers: { Authorization: `Bearer ${accessToken}`, 'X-Restli-Protocol-Version': '2.0.0' },
     });
     if (!res.ok) return {}; // insights non-critiques : échec silencieux, pas de SocialApiError ici

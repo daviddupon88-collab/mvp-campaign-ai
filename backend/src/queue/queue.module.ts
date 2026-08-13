@@ -19,7 +19,18 @@ export const CAMPAIGN_GENERATION_QUEUE = 'campaign-generation';
         },
       }),
     }),
-    BullModule.registerQueue({ name: CAMPAIGN_GENERATION_QUEUE }),
+    BullModule.registerQueue({
+      name: CAMPAIGN_GENERATION_QUEUE,
+      // 2 tentatives max (pas plus) : une erreur systématique (budget/crédits épuisés,
+      // abonnement inactif) ne se résoudra jamais en boucle et ne doit pas re-consommer des
+      // crédits IA à chaque essai — cf. CampaignGenerationProcessor.process(), qui marque la
+      // campagne FAILED dès que ces tentatives sont épuisées plutôt que de la laisser
+      // IN_PROGRESS indéfiniment (l'ancien comportement, sans aucun retry ni état d'échec).
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 5000 },
+      },
+    }),
   ],
   exports: [BullModule],
 })

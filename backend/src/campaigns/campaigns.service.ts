@@ -112,6 +112,7 @@ export class CampaignsService {
         channels,
         templateId: dto.templateId,
         productImageUrl,
+        productDescription: dto.productDescription,
         status: 'IN_PROGRESS',
       },
     });
@@ -194,12 +195,13 @@ export class CampaignsService {
     });
   }
 
-  // Repasse une campagne rejetée en génération (ex: après correction du produit/objectif) —
-  // évite de devoir recréer une campagne de zéro après un rejet.
+  // Repasse une campagne rejetée (ou en échec de génération) en génération — évite de devoir
+  // recréer une campagne de zéro après un rejet ou un échec technique (crédits épuisés,
+  // panne fournisseur persistante, cf. CampaignGenerationProcessor).
   async regenerate(organizationId: string, campaignId: string, dto: CreateCampaignDto) {
     const campaign = await this.getById(organizationId, campaignId);
-    if (campaign.status !== 'REJECTED') {
-      throw new BadRequestException('Seule une campagne rejetée peut être régénérée');
+    if (!['REJECTED', 'FAILED'].includes(campaign.status)) {
+      throw new BadRequestException('Seule une campagne rejetée ou en échec peut être régénérée');
     }
     await this.entitlements.assertActiveSubscription(organizationId);
     await this.entitlements.assertCreditsAvailable(organizationId);
@@ -216,6 +218,9 @@ export class CampaignsService {
     const productImageUrl = dto.productImageAssetId
       ? await this.resolveProductImageUrl(organizationId, dto.productImageAssetId)
       : campaign.productImageUrl ?? undefined;
+    // Repli sur la description enregistrée à la création si aucune nouvelle n'est fournie —
+    // permet une relance fidèle depuis l'écran de détail sans redemander l'information.
+    const productDescription = dto.productDescription?.trim() || campaign.productDescription || undefined;
 
     await this.prisma.campaign.update({
       where: { id: campaignId },
@@ -223,15 +228,17 @@ export class CampaignsService {
         status: 'IN_PROGRESS',
         moderationVerdict: null,
         rejectionReason: null,
+        failureReason: null,
         channels: dto.channels ?? campaign.channels ?? undefined,
         productImageUrl,
+        productDescription,
       },
     });
 
     await this.generationQueue.add('generate', {
       organizationId,
       campaignId,
-      productDescription: dto.productDescription ?? undefined,
+      productDescription,
       productImageUrl,
       objective: dto.objective ?? campaign.objective,
       channels: dto.channels ?? (campaign.channels as string[] | null) ?? [],

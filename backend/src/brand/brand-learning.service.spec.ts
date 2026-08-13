@@ -232,4 +232,33 @@ describe('BrandLearningService.correctEntry (Phase 13)', () => {
 
     expect(update).toHaveBeenCalledWith({ where: { id: 'entry-1' }, data: { content: 'texte corrigé' } });
   });
+
+  // Correction de l'audit : avant ce correctif, une correction manuelle pouvait rendre une
+  // entrée ACTIVE contradictoire avec une autre sans que le scan ne soit jamais redéclenché
+  // (contrairement à recordObservation, qui le fait systématiquement après écriture).
+  it('relance le scan de contradictions après une correction, comme recordObservation le fait déjà', async () => {
+    const existing = { id: 'entry-1', content: 'ancien texte', category: 'COPY' };
+    const { service, scanForContradictions } = buildService(existing);
+
+    await service.correctEntry('org-1', 'entry-1', { content: 'texte corrigé' });
+
+    expect(scanForContradictions).toHaveBeenCalledWith('org-1', 'entry-1', 'COPY');
+  });
+
+  it('ne relance jamais le scan si la catégorie est absente (rien à comparer)', async () => {
+    const existing = { id: 'entry-1', content: 'ancien texte', category: null };
+    const { service, scanForContradictions } = buildService(existing);
+
+    await service.correctEntry('org-1', 'entry-1', { content: 'texte corrigé' });
+
+    expect(scanForContradictions).not.toHaveBeenCalled();
+  });
+
+  it('la correction reste effective même si le re-scan de contradictions échoue (best-effort)', async () => {
+    const existing = { id: 'entry-1', content: 'ancien texte', category: 'COPY' };
+    const { service, scanForContradictions } = buildService(existing);
+    scanForContradictions.mockRejectedValue(new Error('panne'));
+
+    await expect(service.correctEntry('org-1', 'entry-1', { content: 'texte corrigé' })).resolves.toBeDefined();
+  });
 });

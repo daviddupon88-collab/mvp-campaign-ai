@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { escapeHtml } from '../notifications/email/email-templates';
 
 // Système de tickets minimal mais fonctionnel — pas de file d'attente d'équipe ni de SLA
 // (cf. roadmap), mais un vrai fil de conversation avec notification bidirectionnelle :
@@ -83,7 +84,7 @@ export class SupportService {
       email: {
         to: ticket.user.email,
         subject: `Re: ${ticket.subject}`,
-        html: `<p>${message}</p><p><a href="${frontendUrl}/support/${ticketId}">Voir la conversation</a></p>`,
+        html: `<p>${escapeHtml(message)}</p><p><a href="${frontendUrl}/support/${ticketId}">Voir la conversation</a></p>`,
       },
     });
 

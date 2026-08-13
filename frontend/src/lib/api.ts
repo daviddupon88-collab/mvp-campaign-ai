@@ -13,7 +13,7 @@ export class ApiError extends Error {
   statusCode?: number;
 
   constructor(body: any, fallbackStatus: number) {
-    super(body.message ?? `Erreur API: ${fallbackStatus}`);
+    super(body.message ?? `API error (${fallbackStatus})`);
     this.code = body.code;
     this.limitType = body.limitType;
     this.currentPlan = body.currentPlan;
@@ -60,6 +60,9 @@ export const api = {
     request<{ accessToken: string }>('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
 
   me: () => request<any>('/auth/me'),
+
+  updateLanguage: (preferredLanguage: string) =>
+    request<{ id: string; preferredLanguage: string }>('/auth/language', { method: 'PATCH', body: JSON.stringify({ preferredLanguage }) }),
 
   listCampaigns: () => request<any[]>('/campaigns'),
 

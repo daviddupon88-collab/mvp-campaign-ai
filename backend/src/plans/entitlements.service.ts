@@ -50,7 +50,11 @@ export class EntitlementsService {
   // lecture restent toujours autorisées (l'organisation garde accès à son historique).
   async assertActiveSubscription(organizationId: string): Promise<void> {
     const subscription = await this.prisma.subscription.findUnique({ where: { organizationId } });
-    if (!subscription) throw new ForbiddenException('Aucun abonnement actif pour cette organisation');
+    // NotFoundException, pas ForbiddenException : même condition (aucune ligne Subscription)
+    // que getCurrentPlan() ci-dessus, qui lève déjà NotFoundException pour ce cas — corrigé
+    // pour que l'absence d'abonnement produise toujours le même code HTTP (404) quel que soit
+    // le point d'entrée, au lieu d'un 403 ici et d'un 404 ailleurs pour la même cause racine.
+    if (!subscription) throw new NotFoundException('Abonnement introuvable pour cette organisation');
     if (subscription.status === 'expired' || subscription.status === 'canceled') {
       throw new ForbiddenException(
         `Abonnement ${subscription.status === 'expired' ? 'expiré' : 'résilié'} — veuillez souscrire un plan pour continuer`,
@@ -122,7 +126,8 @@ export class EntitlementsService {
   // quota mensuel est à zéro, tant que son solde extraCredits n'est pas lui-même épuisé.
   async assertCreditsAvailable(organizationId: string): Promise<void> {
     const subscription = await this.prisma.subscription.findUnique({ where: { organizationId } });
-    if (!subscription) throw new ForbiddenException('Aucun abonnement actif pour cette organisation');
+    // NotFoundException : même correction et même raison qu'assertActiveSubscription() ci-dessus.
+    if (!subscription) throw new NotFoundException('Abonnement introuvable pour cette organisation');
 
     const planRemaining = subscription.aiCreditsIncluded - subscription.aiCreditsUsed;
     const totalAvailable = planRemaining + subscription.extraCredits;
@@ -208,11 +213,17 @@ export class EntitlementsService {
     }
   }
 
-  async assertOptimizerRunAvailable(organizationId: string): Promise<void> {
+  // tx optionnel : permet à l'appelant (AiOptimizerService) d'exécuter cette vérification
+  // DANS la même transaction Prisma que la création de la recommandation qui suit
+  // immédiatement — corrige une race condition (TOCTOU) identifiée à l'audit : le cron
+  // nocturne et un déclenchement manuel (POST /optimizer/run) pouvaient tous deux lire un
+  // count() sous le plafond avant qu'aucun n'ait encore créé sa recommandation, dépassant
+  // ainsi silencieusement maxOptimizerRuns (notamment le plafond "1 analyse" de l'essai).
+  async assertOptimizerRunAvailable(organizationId: string, tx: Pick<PrismaService, 'optimizationRecommendation'> = this.prisma): Promise<void> {
     const plan = await this.getCurrentPlan(organizationId);
     if (plan.maxOptimizerRuns === null) return;
 
-    const count = await this.prisma.optimizationRecommendation.count({ where: { organizationId } });
+    const count = await tx.optimizationRecommendation.count({ where: { organizationId } });
     if (count >= plan.maxOptimizerRuns) {
       throw this.buildLimitException('optimizerRuns', plan, count, plan.maxOptimizerRuns, "d'analyses Optimizer de l'essai");
     }

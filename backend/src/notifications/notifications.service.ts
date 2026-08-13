@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from './email/email.service';
 
@@ -15,7 +14,8 @@ export interface NotifyParams {
     | 'TRIAL_EXPIRED'
     | 'PAYMENT_FAILED'
     | 'TEAM_INVITATION'
-    | 'SUPPORT_REPLY';
+    | 'SUPPORT_REPLY'
+    | 'CAMPAIGN_GENERATION_FAILED';
   title: string;
   body: string;
   link?: string;
@@ -34,12 +34,7 @@ export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
-    private readonly config: ConfigService,
   ) {}
-
-  private frontendUrl(): string {
-    return this.config.get<string>('FRONTEND_URL', 'http://localhost:3000');
-  }
 
   async notify(params: NotifyParams): Promise<void> {
     try {

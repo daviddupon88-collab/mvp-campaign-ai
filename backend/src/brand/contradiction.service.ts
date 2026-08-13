@@ -55,6 +55,12 @@ export class ContradictionService {
       this.prisma.brandMemoryEntry.findUnique({ where: { id: entryId } }),
       this.prisma.brandMemoryEntry.findMany({
         where: { organizationId, category, status: 'ACTIVE', id: { not: entryId } },
+        // Correction de l'audit : sans orderBy explicite, l'ordre renvoyé par Postgres n'est
+        // pas garanti stable — au-delà de MAX_CANDIDATES_PER_SCAN entrées ACTIVE dans une
+        // catégorie, certaines paires pouvaient ne jamais être comparées de façon
+        // reproductible. Priorité aux connaissances renforcées le plus récemment, les plus
+        // susceptibles d'être pertinentes pour une contradiction avec une entrée fraîche.
+        orderBy: { lastObservedAt: 'desc' },
         take: MAX_CANDIDATES_PER_SCAN,
       }),
     ]);

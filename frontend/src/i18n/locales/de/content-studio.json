@@ -1,0 +1,17 @@
+{
+  "videoUnsupported": "Ihr Browser unterstützt keine Videowiedergabe.",
+  "imageAlt": "Generiertes Bild für {channel}",
+  "empty": "Noch kein Inhalt generiert — das Content Studio füllt sich automatisch, sobald die KI-Orchestrierung ein Ergebnis liefert.",
+  "saveNewVersion": "Speichern (neue Version)",
+  "createVariation": "Variation erstellen",
+  "schedule": "Planen",
+  "confirm": "Bestätigen",
+  "connectedChannel": "Verbundener Kanal",
+  "selectPlaceholder": "Auswählen...",
+  "dateAndTime": "Datum und Uhrzeit",
+  "versions": "Versionen",
+  "variationLabel": "Variation {label}",
+  "versionLabel": "Version {number}",
+  "current": "aktuell",
+  "useThisVersion": "Diese verwenden"
+}

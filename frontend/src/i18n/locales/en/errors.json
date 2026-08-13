@@ -1,0 +1,8 @@
+{
+  "generic": "Something went wrong.",
+  "network": "Network error — please check your connection.",
+  "unauthorized": "You are not authorized to perform this action.",
+  "notFound": "This item could not be found.",
+  "validation": "Some information is missing or invalid.",
+  "unknownApi": "API error ({status})"
+}
