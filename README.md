@@ -27,12 +27,15 @@ Stripe comme véritable moteur de facturation).
     - vidéo : `google-veo` → mock
   - **Social** — OAuth + publication multicanale (Module 14), **verrouillée tant que la campagne n'est pas `APPROVED` ET que l'abonnement est actif** :
     - Meta (Facebook/Instagram) et LinkedIn : implémentation complète, insights Meta branchés pour l'Optimizer
-    - Google Ads et TikTok : structure OAuth prête, `publish()` à finaliser (voir code)
+    - Google Ads et TikTok : OAuth, publication et rafraîchissement complets (voir tableau "État des 5 plateformes" plus bas) — insights non implémentés
   - **Billing** — Stripe comme véritable moteur : Checkout, changement de plan avec proration, résiliation programmée/immédiate, reprise, portail client, historique de factures, packs de crédits, webhooks complets (y compris reset mensuel des crédits au renouvellement)
   - **Product Import** — connecteurs e-commerce (Module 3) : Shopify (complet),
     WooCommerce et Prestashop (fonctionnels)
-- **`frontend/`** — Next.js (App Router) : inscription, dashboard, création de campagne,
-  suivi des générations IA
+- **`frontend/`** — Next.js (App Router), i18n complet (en/de/fr/ar, RTL arabe) : landing
+  page, tarifs, inscription/connexion, onboarding, dashboard, création et suivi de
+  campagne (génération IA, modération, Content Studio, calendrier éditorial, analytics,
+  optimizer), gestion d'équipe et facturation (`/settings`), centre d'aide et tickets
+  support, panneau d'administration (`/admin`)
 - **`docker-compose.yml`** — PostgreSQL + Redis
 
 ## Garde-fous avant publication
@@ -334,9 +337,9 @@ nouvelle ligne, donc jamais de doublon réel. Statut asynchrone géré pour TikT
 | Plateforme | OAuth + refresh | Publication | Insights |
 |---|---|---|---|
 | Meta (FB/IG) | ✅ | ✅ | ✅ |
-| LinkedIn | ✅ (refresh natif) | ✅ | — (non implémenté) |
-| Google Ads | ✅ (refresh natif) | ✅ (campagne créée `PAUSED`, activation manuelle requise) | — (non implémenté) |
-| TikTok | ✅ (refresh natif) | ✅ (avec polling de statut) | — (non implémenté) |
+| LinkedIn | ✅ (refresh natif) | ✅ | ✅ (`organizationalEntityShareStatistics`, nécessite l'URN d'organisation) |
+| Google Ads | ✅ (refresh natif) | ✅ (campagne créée `PAUSED`, activation manuelle requise) | ✅ (GAQL scopé au customer) |
+| TikTok | ✅ (refresh natif) | ✅ (avec polling de statut) | ✅ (Query Video List) |
 
 **Simplification assumée pour Google Ads** : la campagne créée n'a ni mots-clés ni ciblage
 géographique/démographique — elle est volontairement créée au statut `PAUSED` (jamais
@@ -521,23 +524,36 @@ npm run test:cov      # avec couverture
 npm run test:e2e      # E2E (nécessite Postgres/Redis actifs)
 ```
 
-**Note de transparence** : ces tests ont été écrits et vérifiés syntaxiquement (TypeScript
-valide), mais n'ont pas pu être réellement exécutés dans l'environnement où ce code a été
-généré (pas d'accès npm/Postgres/Redis). Ils sont prêts à s'exécuter tel quel dans un
-environnement de développement configuré, et le sont dans la CI (cf. ci-dessous).
-
-Couverture actuelle : `OAuthStateService` (falsification de state, secret invalide, state
-expiré), `TokenCryptoService` (roundtrip chiffrement, IV aléatoire), `plan-catalog.ts`
-(grille de coûts en crédits), `withRetry` (distinction erreurs retryable/non-retryable),
+**306 tests unitaires/intégration** (36 suites, backend) couvrant entre autres :
+`OAuthStateService` (falsification de state, secret invalide, state expiré, rotation via
+`OAUTH_STATE_SECRET_PREVIOUS`), `TokenCryptoService` (roundtrip chiffrement, IV aléatoire),
+`plan-catalog.ts` (grille de coûts en crédits), `withRetry` (erreurs retryable/non-retryable),
 `EntitlementsService` (chaque garde-fou de quota), `AuditService` (comportement best-effort),
-et un test E2E du flux register/login complet.
+les 4 adaptateurs réseaux sociaux (`meta`/`linkedin`/`google-ads`/`tiktok`, publication et
+échange de token OAuth), `CampaignGenerationProcessor` (chemin de succès et d'échec complets),
+`AiOrchestratorService`, `BrandLearningService`/`ContradictionService`, `StripeService`.
+Côté navigateur, **2 specs Playwright** contre la stack réelle (Postgres+Redis+backend+
+frontend, `AI_MODE=mock`) : `campaign-journey.spec.ts` (inscription → onboarding → création
+de campagne → génération IA → approbation) et `i18n.spec.ts` (détection de langue, RTL
+arabe, persistance compte/cookie). Tout tourne réellement en CI (job `e2e-browser`, cf.
+ci-dessous) — pas seulement écrit et vérifié syntaxiquement.
 
 ### CI/CD
 
-`.github/workflows/ci.yml` — sur chaque push/PR vers `main` : provisionne Postgres et Redis
-comme services CI (pas des mocks), installe, génère le client Prisma, applique les
-migrations, lint (non bloquant à ce stade), build, tests unitaires avec couverture, tests
-E2E, publie le rapport de couverture en artefact.
+`.github/workflows/ci.yml` — sur chaque push/PR vers `main`, 4 jobs :
+- **`backend`** — Postgres et Redis en services CI (pas des mocks) : installe, génère le
+  client Prisma, applique les migrations, lint (non bloquant), build, tests unitaires avec
+  couverture, tests E2E NestJS (`test/auth.e2e-spec.ts`), publie le rapport de couverture.
+- **`frontend`** — installe, lint (bloquant), tests unitaires, build.
+- **`e2e-browser`** — Postgres+Redis réels, backend buildé et démarré en arrière-plan,
+  frontend buildé en mode `standalone` puis servi (`scripts/serve-standalone.js`), suite
+  Playwright complète contre cette stack réelle ; publie le rapport Playwright et, en cas
+  d'échec, les logs backend.
+- **`docker-publish`** (uniquement sur push vers `main`, après succès des 3 jobs
+  précédents) — build et publie les images `backend`/`frontend` sur GitHub Container
+  Registry.
+
+Repo public : `github.com/daviddupon88-collab/mvp-campaign-ai`, CI verte de bout en bout.
 
 ## Conformité & Exploitation
 
@@ -852,10 +868,18 @@ explicitement pour une décision consciente sur la grille de l'essai.
 
 ## Ce qui reste hors scope (volontairement, prochains chantiers)
 
-Tests automatisés, observabilité de production, conformité RGPD/AI Act opérationnelle,
-base vectorielle pour la mémoire de marque, API publique, marketplace de templates
-inter-organisations avec commission, notifications (email/Slack) pour les campagnes en
-attente de revue et les nouvelles recommandations de l'Optimizer.
+Base vectorielle pour la mémoire de marque (recherche par similarité plutôt que les 5
+derniers apprentissages), API publique (le flag `features.apiAccess` existe dans
+`plan-catalog.ts` mais n'est câblé à aucune surface d'API réelle), marketplace de templates
+inter-organisations avec commission, notifications (email/Slack) pour les nouvelles
+recommandations de l'Optimizer (`OPTIMIZER_RECOMMENDATION` existe dans l'enum
+`NotificationType` mais n'est déclenché nulle part — contrairement aux notifications de
+campagne prête pour revue et aux événements d'équipe, tous deux câblés).
+
+Tests automatisés (306 tests + e2e Playwright réel), observabilité de production (Sentry,
+Prometheus, logs structurés) et conformité RGPD/AI Act opérationnelle (`PrivacyModule`) sont
+**fait** — cf. sections "Tests, Sécurité & Observabilité" et "Conformité & Exploitation"
+plus haut ; cette liste était restée obsolète après leur construction.
 
 ## Prérequis
 
@@ -1007,8 +1031,12 @@ campaign-ai/
 │       └── prisma/          # service Prisma partagé
 └── frontend/
     └── src/
-        ├── app/              # pages (login, register, dashboard, campaigns)
-        ├── components/       # UI partagée + nav
+        ├── app/              # landing, login/register, onboarding, dashboard,
+        │                     # campaigns (liste, [id], new), calendar, admin,
+        │                     # settings (brand, team, billing, account), help, support
+        ├── components/       # UI partagée, nav, sélecteur de langue
+        ├── i18n/             # next-intl : config, résolution de locale, 48 fichiers de
+        │                     # traduction (en/de/fr/ar × 12 namespaces)
         └── lib/              # client API, hook d'auth
 ```
 
@@ -1031,7 +1059,7 @@ campaign-ai/
 15. ~~Finaliser le polling de statut TikTok~~ ✅ fait — `checkPublishStatus()`, interrogé de façon synchrone par `PublishingService` (pas encore en job récurrent pour les cas de traitement anormalement long).
 16. ~~Frontend complet~~ ✅ fait — écran de revue (approbation), gestion d'équipe (inviter/retirer/changer de rôle, `/settings/team`), sélecteur de plan avec upgrade/downgrade en un clic (`/settings/billing`, `PricingGrid`), sélecteur de template dans le wizard, panneau de recommandations Optimizer, affichage du score de marque et de la consommation de quota — tout est branché sur le backend, aucune de ces briques n'est un stub.
 17. ~~Envoi d'emails réels pour les invitations et les notifications de facturation~~ ✅ fait — item resté obsolète dans cette liste après sa construction (cf. item 41, `NotificationsService`, branchée sur 8 événements du cycle de vie dont l'invitation) ; corrigé ici plutôt que laissé tel quel (audit du 2026-08-12).
-18. ~~Tests automatisés sur la logique critique~~ ✅ fait (partiellement) — `OAuthStateService`, `TokenCryptoService`, `withRetry`, `EntitlementsService`, `AuditService`, `plan-catalog.ts`, + 1 test E2E (auth). Reste à couvrir : adaptateurs sociaux, workflows d'approbation/optimisation/facturation complets.
+18. ~~Tests automatisés sur la logique critique~~ ✅ fait — `OAuthStateService`, `TokenCryptoService`, `withRetry`, `EntitlementsService`, `AuditService`, `plan-catalog.ts`, + 1 test E2E (auth) au moment de cet item ; complété depuis (items 97-98, 102) jusqu'à 306 tests/36 suites, dont les 4 adaptateurs sociaux et le chemin de succès complet de `CampaignGenerationProcessor` — cf. section Tests plus haut.
 19. ~~Étendre `fetchInsights()` à LinkedIn/Google Ads/TikTok~~ ✅ fait — `organizationalEntityShareStatistics` (LinkedIn, nécessite l'URN d'organisation), GAQL scopé au customer (Google Ads), Query Video List (TikTok). A nécessité d'élargir `FetchInsightsParams` avec `externalAccountId`, absent jusqu'ici : ces API de reporting ne sont interrogeables que dans le contexte du compte externe, pas par ID de publication seul comme Meta.
 20. ~~Procédure de rotation de `TOKEN_ENCRYPTION_KEY`~~ ✅ fait — `backend/src/scripts/rotate-token-encryption-key.ts` (`npm run rotate:token-key`), mode `--dry-run`, testé (déchiffrement/rechiffrement sans perte vérifié unitairement).
 21. ~~Content Studio (versions, variations, bibliothèque de médias)~~ ✅ fait — `ContentStudioService` + `AssetsService`, alimenté automatiquement par le worker de génération.
@@ -1134,12 +1162,12 @@ campaign-ai/
 
 **Non corrigé, signalé explicitement** :
 - **Absence de clé d'idempotence côté plateforme** pour la publication (Meta/LinkedIn/TikTok/Google Ads) — le retry côté DB (item 70) réduit le risque mais ne l'élimine pas totalement en cas d'incident au moment exact de l'appel plateforme lui-même ; nécessiterait une recherche API dédiée par plateforme.
-- **`NotificationsService` non utilisé dans `TeamsService`** (item 84) — l'injection morte a été retirée, mais la question produit reste ouverte : une invitation/un retrait d'équipe ne génère aujourd'hui aucune notification in-app, seulement un email. Décision volontairement non prise ici : ajouter cette notification serait une fonctionnalité nouvelle, pas la correction d'un bug.
-- **Couverture de tests incomplète sur des chemins récemment modifiés** — `campaign-generation.processor.spec.ts` ne couvre que la branche d'échec de `process()`, jamais le chemin de succès complet (`persistGeneratedContent`, verdict `BLOCKED`→`REJECTED`, `PASSED/FLAGGED`→`READY_FOR_REVIEW`) ; `entitlements.service.spec.ts` n'a pas de test pour le statut `'suspended'` ni pour `assertFeature()`/`assertChannelAvailable()`/`getUsageSummary()`. Signalé, non ajouté dans cette passe (périmètre : corriger des bugs, pas construire une suite de tests complète).
+- **Couverture de tests incomplète sur des chemins récemment modifiés (au moment de cet audit)** — `campaign-generation.processor.spec.ts` ne couvrait que la branche d'échec de `process()`, `entitlements.service.spec.ts` n'avait pas de test pour le statut `'suspended'` ni pour `assertFeature()`/`assertChannelAvailable()`/`getUsageSummary()`. Comblé depuis par les items 97-98.
 
 **Priorité 1 (2026-08-13) — premier push GitHub + CI réelle**, seul moyen de vérification disponible pour les tests e2e Playwright (Redis indisponible dans cet environnement local tout au long de la session) :
 
 100. ~~Hypothèses infrastructure/support non vérifiées~~ ✅ validées — chiffrage réel de l'hébergement cible (Railway, facturation à la seconde : ~$10/Go RAM/mois, ~$20/vCPU/mois, ~$0,16/Go stockage/mois) pour la stack complète (backend NestJS+worker BullMQ, frontend Next.js standalone, Postgres, Redis, stockage objet) dimensionnée à l'échelle MVP : **~$64/mois (~59€) pour toute la plateforme, partagée entre tous les clients**. Comparé aux allocations par client dans `plan-catalog.ts` (7€ Starter, 14€ Growth, 30€ Business), qui somment déjà à ~107€ pour un portefeuille de lancement réaliste (5 Starter + 3 Growth + 1 Business) — les hypothèses actuelles sont donc conservatrices (surestiment le coût infra par client), pas sous-estimées : la marge nette de 40% ciblée par l'item 76 reste en sécurité. Décision produit explicite : conserver les montants actuels tels quels plutôt que relancer un 3e recalibrage de `aiCreditsIncluded`/`maxActiveCampaigns` sur la base d'un nombre de clients par plan encore inconnu avant lancement — à revisiter une fois une vraie facture Railway et un vrai portefeuille de clients disponibles.
 101. ~~Absence de notification in-app pour les événements d'équipe~~ ✅ corrigé (décision produit tranchée, item 84) — `TeamsService` déclenche désormais `NotificationsService.notifyOrganization()` (OWNER/ADMIN) sur trois événements : nouveau membre (`TEAM_MEMBER_JOINED`, à l'acceptation de l'invitation), retrait de membre (`TEAM_MEMBER_REMOVED`), changement de rôle (`TEAM_ROLE_CHANGED`) — mêmes patterns que les notifications de facturation/campagne déjà en place. L'invitation ENVOYÉE reste email uniquement (l'invité n'a pas encore de compte). 3 nouvelles valeurs d'enum `NotificationType` (migration additive `20260813190000_team_notification_types`, écrite à la main — pas de Postgres local disponible dans cet environnement pour `prisma migrate dev`, suit exactement le pattern SQL de `ALTER TYPE ... ADD VALUE` des migrations précédentes). Vérifié : typecheck ✅, lint ✅, build ✅, **303/303 tests** ✅.
 102. ~~Rotation de OAUTH_STATE_SECRET non implémentée~~ ✅ corrigée — `OAuthStateService` accepte désormais un secret de repli `OAUTH_STATE_SECRET_PREVIOUS` (optionnel) : `create()` signe toujours avec le secret courant, `verify()` accepte le secret courant OU le précédent. Contrairement à `TOKEN_ENCRYPTION_KEY` (item 20/38, script de rotation dédié car les tokens sont stockés durablement), rien n'est persisté sous `OAUTH_STATE_SECRET` — le `state` OAuth expire en 10 minutes — donc aucune donnée à rechiffrer, juste un repli temporaire le temps qu'un déploiement de rotation laisse expirer les états signés sous l'ancien secret. Procédure documentée dans `.env.example`. 3 nouveaux tests (`oauth-state.service.spec.ts`) : acceptation sous l'ancien secret pendant la fenêtre de rotation, rejet d'un secret tiers même avec un secret précédent configuré, `create()` ne signe jamais avec l'ancien secret.
-103. ~~Premier déploiement du dépôt sur un remote Git~~ ✅ fait — poussé sur `github.com/daviddupon88-collab/mvp-campaign-ai` (branche renommée `master` → `main` pour correspondre au déclencheur de `ci.yml`). CI GitHub Actions (4 jobs : `backend`, `frontend`, `e2e-browser`, `docker-publish`) verte de bout en bout après 3 itérations sur le job `e2e-browser` : (1) `webServer.command` de `playwright.config.ts` utilisait `next start`, incompatible avec `output: "standalone"` — remplacé par `frontend/scripts/serve-standalone.js`, qui reproduit l'étape de copie `.next/static`+`public/` déjà faite par `frontend/Dockerfile` ; (2) ce script héritait silencieusement de la variable d'environnement `PORT=3001` définie au niveau du job CI (destinée à l'étape de démarrage du backend, mais les variables de job s'appliquent à chaque étape), provoquant un `EADDRINUSE` — port codé en dur à `3000` ; (3) `frontend/e2e/i18n.spec.ts` (jamais exécuté avant ce premier run CI, Redis indisponible localement toute la session) rechargeait la page `/login` après `context.clearCookies()` sans `page.reload()` — le HTML déjà rendu en arabe (cookie `NEXT_LOCALE=ar` au moment du rendu initial) ne se met pas à jour rétroactivement, faisant échouer `getByLabel('Email')` après un timeout de 60s. `docker-publish` (bloqué depuis toujours par `needs: [backend, frontend, e2e-browser]`) tourne désormais avec succès à chaque push sur `main`.
+103. ~~Nettoyage README résiduel~~ ✅ fait — plusieurs sections contredisaient le reste du même document ou décrivaient un état antérieur jamais mis à jour : (1) "publish() à finaliser" pour Google Ads/TikTok alors que items 14-15 et le tableau "État des 5 plateformes" les documentent déjà comme faits ; (2) le tableau "État des 5 plateformes" listait les insights LinkedIn/Google Ads/TikTok comme "non implémenté" alors que l'item 19 documente leur implémentation — le tableau, jamais mis à jour, était le fautif ; (3) note de transparence affirmant que les tests "n'ont pas pu être réellement exécutés" — obsolète depuis longtemps (306 tests + 2 specs Playwright, tous exécutés à répétition cette session, CI verte) ; (4) section CI/CD ne décrivait que le job `backend`, omettant `frontend`/`e2e-browser`/`docker-publish` ; (5) section "hors scope" listait comme non faits les tests automatisés, l'observabilité de production et la conformité RGPD/AI Act — toutes les trois déjà livrées et documentées plus haut dans le même README ; (6) description du frontend (aperçu en tête de fichier + arborescence `Structure`) toujours limitée à "login/register/dashboard/campaigns", omettant admin/équipe/facturation/aide/support/calendrier/i18n ; (7) bullet "non corrigé" sur les notifications d'équipe, contredit par l'item 101 qui venait de le corriger. Aucun changement de code, uniquement de documentation. Au passage : un vrai bug fonctionnel repéré (non corrigé ici, hors périmètre d'un nettoyage doc) — le lien d'invitation email pointe vers `/invitations/:token`, une route qui n'existe pas côté frontend, et `lib/api.ts` n'appelle jamais `GET/POST /invitations/:token[/accept]` ; un invité ne peut donc pas accepter une invitation depuis l'interface.
+104. ~~Premier déploiement du dépôt sur un remote Git~~ ✅ fait — poussé sur `github.com/daviddupon88-collab/mvp-campaign-ai` (branche renommée `master` → `main` pour correspondre au déclencheur de `ci.yml`). CI GitHub Actions (4 jobs : `backend`, `frontend`, `e2e-browser`, `docker-publish`) verte de bout en bout après 3 itérations sur le job `e2e-browser` : (1) `webServer.command` de `playwright.config.ts` utilisait `next start`, incompatible avec `output: "standalone"` — remplacé par `frontend/scripts/serve-standalone.js`, qui reproduit l'étape de copie `.next/static`+`public/` déjà faite par `frontend/Dockerfile` ; (2) ce script héritait silencieusement de la variable d'environnement `PORT=3001` définie au niveau du job CI (destinée à l'étape de démarrage du backend, mais les variables de job s'appliquent à chaque étape), provoquant un `EADDRINUSE` — port codé en dur à `3000` ; (3) `frontend/e2e/i18n.spec.ts` (jamais exécuté avant ce premier run CI, Redis indisponible localement toute la session) rechargeait la page `/login` après `context.clearCookies()` sans `page.reload()` — le HTML déjà rendu en arabe (cookie `NEXT_LOCALE=ar` au moment du rendu initial) ne se met pas à jour rétroactivement, faisant échouer `getByLabel('Email')` après un timeout de 60s. `docker-publish` (bloqué depuis toujours par `needs: [backend, frontend, e2e-browser]`) tourne désormais avec succès à chaque push sur `main`.
