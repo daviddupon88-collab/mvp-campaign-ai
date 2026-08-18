@@ -49,7 +49,7 @@ function buildService(recommendationJson: unknown) {
   const config = { get: jest.fn().mockReturnValue('real') } as unknown as ConfigService;
 
   const service = new AiOptimizerService(prisma, aiGateway, analyticsIngestion, brandLearning, entitlements, config);
-  return { service, recordObservation, optimizationRecommendationCreate };
+  return { service, recordObservation, optimizationRecommendationCreate, generateText };
 }
 
 describe('AiOptimizerService — intégration Brand Brain (Phase 15)', () => {
@@ -137,5 +137,19 @@ describe('AiOptimizerService — re-vérification transactionnelle du quota Opti
 
     expect(count).toBe(0); // l'échec dans la transaction est capturé par le try/catch de runForOrganization
     expect(optimizationRecommendationCreate).not.toHaveBeenCalled();
+  });
+});
+
+// Chantier "prompts précis, orientés objectif, tracés" (2026-08-18) : traçabilité seulement
+// ici (ce prompt inclut déjà l'objectif explicitement, cf. audit du plan) — pas de changement
+// de contenu, juste vérifier que promptVersion est bien transmis à AiGatewayService.
+describe('AiOptimizerService — traçabilité promptVersion', () => {
+  it('transmet PROMPT_VERSIONS.optimizerRecommendation à generateText', async () => {
+    const { service, generateText } = buildService({ performance: 'on_track', summary: 'Conforme', actions: [] });
+
+    await service.runForOrganization('org-1');
+
+    const [, , , promptVersion] = (generateText as jest.Mock).mock.calls[0];
+    expect(promptVersion).toBe('optimizer-recommendation-v1');
   });
 });

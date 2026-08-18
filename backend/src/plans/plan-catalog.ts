@@ -232,7 +232,12 @@ export const CREDIT_COSTS: Record<string, Record<string, number>> = {
   // analyzeImage : analyse produit par vision (photo téléversée) — remplace generateText
   // pour l'étape d'analyse produit quand une photo est fournie, cf. AiOrchestratorService.
   // analyzeProductImage(). Coût explicite plutôt que le repli silencieux à 5 (creditCostFor).
-  campaign_generation: { generateText: 8, generateImage: 25, generateVideo: 150, analyzeImage: 10 },
+  // generateAudio (voix off/narration, cf. OpenAiProvider) : tarif tts-1 très faible face au
+  // texte/image ($0.015/1000 caractères, une narration de ~250 caractères ≈ $0.004) — coût
+  // explicite plutôt que le repli à 5 crédits, cohérent avec le reste de cette table.
+  // transcribeAudio (Whisper, sert à générer les sous-titres) : $0.006/minute, une narration de
+  // ~20s ≈ $0.002 — encore plus négligeable que generateAudio.
+  campaign_generation: { generateText: 8, generateImage: 25, generateVideo: 150, generateAudio: 3, transcribeAudio: 1, analyzeImage: 10 },
   // Garde-fous qualité/sécurité : coût réduit ou nul — ce ne sont pas des fonctionnalités
   // que le client "achète", mais des vérifications que Campaign-ai effectue pour son propre
   // compte avant de proposer un résultat. moderateText n'est jamais facturé au client

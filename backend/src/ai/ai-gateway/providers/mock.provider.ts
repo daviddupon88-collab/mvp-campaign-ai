@@ -4,6 +4,8 @@ import {
   GenerateTextParams,
   GenerateImageParams,
   GenerateVideoParams,
+  GenerateAudioParams,
+  TranscribeAudioParams,
   AnalyzeImageParams,
   ModerateTextResult,
   AiGenerationResult,
@@ -49,6 +51,34 @@ export class MockProvider implements AiProvider {
       content: 'https://example.com/mock-video.mp4',
       provider: this.name,
       model: 'mock-video-v1',
+      costEstimate: 0,
+      durationMs: Date.now() - start,
+    };
+  }
+
+  async generateAudio(_params: GenerateAudioParams): Promise<AiGenerationResult> {
+    const start = Date.now();
+    await this.simulateLatency();
+    return {
+      content: 'https://example.com/mock-narration.mp3',
+      provider: this.name,
+      model: 'mock-audio-v1',
+      costEstimate: 0,
+      durationMs: Date.now() - start,
+    };
+  }
+
+  async transcribeAudio(_params: TranscribeAudioParams): Promise<AiGenerationResult> {
+    const start = Date.now();
+    await this.simulateLatency();
+    const segments = [
+      { start: 0, end: 1.5, text: '[MOCK] Une photo.' },
+      { start: 1.5, end: 3, text: '[MOCK] Une campagne complète.' },
+    ];
+    return {
+      content: JSON.stringify(segments),
+      provider: this.name,
+      model: 'mock-whisper-v1',
       costEstimate: 0,
       durationMs: Date.now() - start,
     };

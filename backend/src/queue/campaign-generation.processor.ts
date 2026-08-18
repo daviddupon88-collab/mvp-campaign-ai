@@ -10,6 +10,7 @@ import { AssetsService } from '../content-studio/assets.service';
 import { StorageService } from '../storage/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { VideoFinalizationService } from '../video-assembly/video-finalization.service';
 
 // Worker : génère le contenu de la campagne, le PERSISTE dans le Content Studio (auparavant,
 // le contenu généré n'existait que le temps de la requête IA, jamais conservé au-delà —
@@ -21,7 +22,12 @@ import { NotificationsService } from '../notifications/notifications.service';
 // (en parallèle) -> (BLOCKED => REJECTED) ou (sinon => READY_FOR_REVIEW). Le statut PUBLISHED
 // n'est JAMAIS atteint depuis ce worker — uniquement via l'action explicite d'un humain
 // habilité (cf. CampaignsController.approve + SocialController.publish).
-@Processor(CAMPAIGN_GENERATION_QUEUE)
+// concurrency: 1 explicite — l'assemblage vidéo final (VideoFinalizationService) lance un
+// processus ffmpeg réel par job, CPU-intensif, contrairement au reste du pipeline (uniquement
+// des appels HTTP). La concurrence à 1 était jusqu'ici implicite (comportement par défaut de
+// BullMQ, jamais pensé comme une décision) ; désormais une contrainte volontaire pour éviter
+// que plusieurs encodages ffmpeg se disputent le CPU du worker en même temps.
+@Processor(CAMPAIGN_GENERATION_QUEUE, { concurrency: 1 })
 export class CampaignGenerationProcessor extends WorkerHost {
   private readonly logger = new Logger(CampaignGenerationProcessor.name);
 
@@ -34,6 +40,7 @@ export class CampaignGenerationProcessor extends WorkerHost {
     private readonly storage: StorageService,
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly videoFinalization: VideoFinalizationService,
   ) {
     super();
   }
@@ -86,7 +93,7 @@ export class CampaignGenerationProcessor extends WorkerHost {
     // Les deux vérifications sont indépendantes (sécurité vs qualité éditoriale) — exécutées
     // en parallèle pour ne pas doubler le temps d'attente de l'utilisateur.
     const [moderationResult, brandResult] = await Promise.all([
-      this.moderation.runCampaignModeration(organizationId, campaignId, texts, images),
+      this.moderation.runCampaignModeration(organizationId, campaignId, job.data.objective, texts, images),
       this.brandConsistency.runCampaignBrandCheck(organizationId, campaignId, texts, images),
     ]);
 
@@ -162,6 +169,9 @@ export class CampaignGenerationProcessor extends WorkerHost {
     if (/abonnement|subscription/i.test(message)) {
       return "Abonnement inactif — impossible de terminer la génération.";
     }
+    if (/assemblage vidéo|contrôle qualité de la vidéo|ffmpeg/i.test(message)) {
+      return "L'assemblage final de la vidéo a échoué. Réessayez, ou contactez le support si le problème persiste.";
+    }
     return "La génération a échoué suite à une erreur technique. Réessayez, ou contactez le support si le problème persiste.";
   }
 
@@ -200,15 +210,93 @@ export class CampaignGenerationProcessor extends WorkerHost {
     });
 
     if (results.video) {
-      const videoAsset = await this.registerGeneratedVisual(organizationId, 'VIDEO', results.video.content, results.video.generationId, 'video');
+      const videoChannel = targetChannels.find((c) => ['tiktok', 'instagram'].includes(c)) ?? targetChannels[0];
+
+      // Les bruts (vidéo Veo, narration TTS) restent tracés comme Assets — traçabilité/coût,
+      // cohérent avec le reste du pipeline (chaque AiGeneration a déjà son propre suivi) — mais
+      // n'apparaissent PLUS comme ContentPiece séparés : le reviewer ne doit voir qu'UNE vidéo
+      // finale (son + sous-titres inclus), pas des fragments à côté les uns des autres.
+      const rawVideoAsset = await this.registerGeneratedVisual(organizationId, 'VIDEO', results.video.content, results.video.generationId, 'video-brute');
+      if (results.narration) {
+        await this.registerGeneratedAudio(organizationId, results.narration.content, results.narration.generationId);
+      }
+
+      const finalAsset = results.narration
+        ? await this.finalizeVideoAsset(organizationId, results.video.content, results.narration.content, results.transcript, rawVideoAsset)
+        : rawVideoAsset;
+
       await this.contentStudio.createPiece({
         organizationId,
         campaignId,
-        channel: targetChannels.find((c) => ['tiktok', 'instagram'].includes(c)) ?? targetChannels[0],
+        channel: videoChannel,
         type: 'VIDEO',
-        assetId: videoAsset.id,
+        assetId: finalAsset.id,
       });
     }
+  }
+
+  // Assemble narration + musique de fond + sous-titres sur la vidéo brute (cf.
+  // VideoFinalizationService) et enregistre le résultat comme Asset définitif. En mode mock (ou
+  // tout fournisseur qui ne renvoie pas un vrai média audio), `finalize()` renvoie "skipped" —
+  // repli sur la vidéo brute, comme avant ce chantier, plutôt que de bloquer le mode dev/test
+  // sans ffmpeg réellement exercé. Une exception ici (échec ffmpeg ou QC) N'EST PAS interceptée :
+  // elle doit se propager telle quelle vers process()/markCampaignFailed — un fichier final
+  // cassé ne doit jamais atteindre la revue humaine.
+  private async finalizeVideoAsset(
+    organizationId: string,
+    rawVideoUrl: string,
+    narrationDataUri: string,
+    transcript: Awaited<ReturnType<AiOrchestratorService['generateCampaign']>>['transcript'],
+    rawVideoAsset: Awaited<ReturnType<AssetsService['register']>>,
+  ) {
+    const result = await this.videoFinalization.finalize({ rawVideoUrl, narrationDataUri, transcript });
+
+    if (result.status === 'skipped') {
+      this.logger.warn(`Assemblage vidéo final ignoré (${result.reason}) — repli sur la vidéo brute.`);
+      return rawVideoAsset;
+    }
+
+    const uploaded = await this.storage.upload(organizationId, result.buffer, 'campaign-final.mp4', result.mimeType);
+    // generationId volontairement absent : cet Asset est un COMPOSITE de plusieurs générations
+    // (vidéo + narration + transcription), aucune ne le représente 1:1 — et Asset.generationId
+    // est @unique, déjà réclamé par rawVideoAsset et l'Asset de narration ci-dessus.
+    return this.assets.register({
+      organizationId,
+      type: 'VIDEO',
+      source: 'GENERATED',
+      url: uploaded.url,
+      storageKey: uploaded.key,
+      mimeType: result.mimeType,
+      fileSizeBytes: result.buffer.length,
+    });
+  }
+
+  // L'audio TTS n'a, contrairement à l'image/la vidéo, aucune URL fournisseur temporaire à
+  // re-héberger (cf. OpenAiProvider.generateAudio) : son "content" est déjà les octets bruts,
+  // encodés en data URI. Décodé et stocké directement via StorageService.upload() — le même
+  // mécanisme qu'un fichier téléversé manuellement, pas un re-hébergement depuis une URL.
+  private async registerGeneratedAudio(organizationId: string, dataUri: string, generationId: string | undefined) {
+    const match = /^data:(.+?);base64,(.+)$/.exec(dataUri);
+    if (!match) {
+      // Repli : provider mock (ou futur fournisseur renvoyant directement une URL hébergée)
+      // plutôt qu'un data URI — jamais d'exception pour une forme de contenu inattendue ici.
+      return this.assets.register({ organizationId, type: 'AUDIO', source: 'GENERATED', url: dataUri, generationId });
+    }
+
+    const [, mimeType, base64] = match;
+    const buffer = Buffer.from(base64, 'base64');
+    const extension = mimeType.split('/')[1] ?? 'bin';
+    const uploaded = await this.storage.upload(organizationId, buffer, `narration.${extension}`, mimeType);
+
+    return this.assets.register({
+      organizationId,
+      type: 'AUDIO',
+      source: 'GENERATED',
+      url: uploaded.url,
+      storageKey: uploaded.key,
+      mimeType,
+      generationId,
+    });
   }
 
   // Les fournisseurs d'IA (OpenAI, Flux, Ideogram, Google Veo) renvoient tous des URLs

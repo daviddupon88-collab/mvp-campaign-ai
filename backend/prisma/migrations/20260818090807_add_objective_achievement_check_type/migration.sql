@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "ModerationCheckType" ADD VALUE 'OBJECTIVE_ACHIEVEMENT';

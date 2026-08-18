@@ -7,6 +7,7 @@ import { MockProvider } from './providers/mock.provider';
 import { OpenAiProvider } from './providers/openai.provider';
 import { AnthropicProvider } from './providers/anthropic.provider';
 import { GoogleVeoProvider } from './providers/google-veo.provider';
+import { RunwayProvider } from './providers/runway.provider';
 import { FluxProvider } from './providers/flux.provider';
 import { IdeogramProvider } from './providers/ideogram.provider';
 import {
@@ -14,6 +15,8 @@ import {
   GenerateTextParams,
   GenerateImageParams,
   GenerateVideoParams,
+  GenerateAudioParams,
+  TranscribeAudioParams,
   AnalyzeImageParams,
   ModerateTextResult,
   AiGenerationResult,
@@ -28,7 +31,7 @@ export interface AiCallContext {
   purpose: 'campaign_generation' | 'moderation' | 'brand_consistency' | 'optimizer';
 }
 
-type TaskType = 'generateText' | 'generateImage' | 'generateVideo' | 'analyzeImage';
+type TaskType = 'generateText' | 'generateImage' | 'generateVideo' | 'generateAudio' | 'transcribeAudio' | 'analyzeImage';
 
 // AI Gateway : interface unique vers tous les fournisseurs d'IA (cf. chapitre 10.5) —
 // ET point de passage OBLIGÉ pour la traçabilité économique de chaque appel (coût, tokens,
@@ -47,7 +50,16 @@ export class AiGatewayService {
   private readonly fallbackChains: Record<TaskType, string[]> = {
     generateText: ['openai', 'anthropic', 'mock'],
     generateImage: ['flux', 'ideogram', 'openai', 'mock'],
-    generateVideo: ['google-veo', 'mock'],
+    // runway APRÈS google-veo : Veo reste le fournisseur préféré (texte seul, pas besoin
+    // d'attendre le visuel), Runway un vrai repli fonctionnel (pas juste mock) quand Veo est
+    // indisponible — cf. RunwayProvider.
+    generateVideo: ['google-veo', 'runway', 'mock'],
+    // Un seul fournisseur voix off pour l'instant (OpenAI TTS) — pas d'alternative câblée,
+    // contrairement aux autres tâches (repli sur un deuxième fournisseur réel avant mock).
+    generateAudio: ['openai', 'mock'],
+    // Sert uniquement à horodater la narration déjà générée (sous-titres) — même fournisseur
+    // unique que generateAudio, pas d'alternative câblée.
+    transcribeAudio: ['openai', 'mock'],
     analyzeImage: ['openai', 'mock'],
   };
 
@@ -68,6 +80,7 @@ export class AiGatewayService {
     private readonly openAiProvider: OpenAiProvider,
     private readonly anthropicProvider: AnthropicProvider,
     private readonly googleVeoProvider: GoogleVeoProvider,
+    private readonly runwayProvider: RunwayProvider,
     private readonly fluxProvider: FluxProvider,
     private readonly ideogramProvider: IdeogramProvider,
   ) {
@@ -76,6 +89,7 @@ export class AiGatewayService {
       ['openai', this.openAiProvider],
       ['anthropic', this.anthropicProvider],
       ['google-veo', this.googleVeoProvider],
+      ['runway', this.runwayProvider],
       ['flux', this.fluxProvider],
       ['ideogram', this.ideogramProvider],
     ]);
@@ -85,26 +99,37 @@ export class AiGatewayService {
     return this.config.get<string>('AI_MODE', 'mock') === 'mock';
   }
 
-  async generateText(ctx: AiCallContext, params: GenerateTextParams, providerName?: string): Promise<AiGenerationResult> {
-    return this.executeTracked(ctx, 'generateText', providerName, params.prompt, (p) => p.generateText!(params));
+  async generateText(ctx: AiCallContext, params: GenerateTextParams, providerName?: string, promptVersion?: string): Promise<AiGenerationResult> {
+    return this.executeTracked(ctx, 'generateText', providerName, params.prompt, promptVersion, (p) => p.generateText!(params));
   }
 
-  async generateImage(ctx: AiCallContext, params: GenerateImageParams, providerName?: string): Promise<AiGenerationResult> {
-    return this.executeTracked(ctx, 'generateImage', providerName, params.prompt, (p) => p.generateImage!(params));
+  async generateImage(ctx: AiCallContext, params: GenerateImageParams, providerName?: string, promptVersion?: string): Promise<AiGenerationResult> {
+    return this.executeTracked(ctx, 'generateImage', providerName, params.prompt, promptVersion, (p) => p.generateImage!(params));
   }
 
-  async generateVideo(ctx: AiCallContext, params: GenerateVideoParams, providerName?: string): Promise<AiGenerationResult> {
-    return this.executeTracked(ctx, 'generateVideo', providerName, params.prompt, (p) => p.generateVideo!(params));
+  async generateVideo(ctx: AiCallContext, params: GenerateVideoParams, providerName?: string, promptVersion?: string): Promise<AiGenerationResult> {
+    return this.executeTracked(ctx, 'generateVideo', providerName, params.prompt, promptVersion, (p) => p.generateVideo!(params));
   }
 
-  async analyzeImage(ctx: AiCallContext, params: AnalyzeImageParams, providerName?: string): Promise<AiGenerationResult> {
-    return this.executeTracked(ctx, 'analyzeImage', providerName, params.prompt, (p) => p.analyzeImage!(params));
+  async generateAudio(ctx: AiCallContext, params: GenerateAudioParams, providerName?: string, promptVersion?: string): Promise<AiGenerationResult> {
+    return this.executeTracked(ctx, 'generateAudio', providerName, params.prompt, promptVersion, (p) => p.generateAudio!(params));
+  }
+
+  // Pas de "prompt" texte naturel ici (l'entrée est de l'audio, pas du texte) — libellé de log
+  // fixe plutôt que de forcer un texte artificiel. Pas de promptVersion non plus pour la même
+  // raison : rien à versionner, aucun template de prompt n'entre en jeu.
+  async transcribeAudio(ctx: AiCallContext, params: TranscribeAudioParams, providerName?: string): Promise<AiGenerationResult> {
+    return this.executeTracked(ctx, 'transcribeAudio', providerName, '[transcription narration]', undefined, (p) => p.transcribeAudio!(params));
+  }
+
+  async analyzeImage(ctx: AiCallContext, params: AnalyzeImageParams, providerName?: string, promptVersion?: string): Promise<AiGenerationResult> {
+    return this.executeTracked(ctx, 'analyzeImage', providerName, params.prompt, promptVersion, (p) => p.analyzeImage!(params));
   }
 
   // Modération : forme de réponse différente (pas de "content" généré), donc tracking dédié
   // plutôt que de forcer ModerateTextResult dans AiGenerationResult. Toujours journalisé,
   // jamais facturé en crédits (cf. CREDIT_COSTS.moderation.moderateText = 0).
-  async moderateText(ctx: AiCallContext, text: string): Promise<ModerateTextResult> {
+  async moderateText(ctx: AiCallContext, text: string, promptVersion?: string): Promise<ModerateTextResult> {
     const provider = this.useMock() ? this.mockProvider : this.openAiProvider;
 
     const generation = await this.prisma.aiGeneration.create({
@@ -116,6 +141,7 @@ export class AiGatewayService {
         provider: provider.name,
         model: 'moderation-api',
         prompt: text.slice(0, 500), // tronqué : évite de stocker un texte arbitrairement long
+        promptVersion,
         status: 'RUNNING',
       },
     });
@@ -144,6 +170,7 @@ export class AiGatewayService {
     taskType: TaskType,
     providerName: string | undefined,
     promptForLog: string,
+    promptVersion: string | undefined,
     call: (p: AiProvider) => Promise<AiGenerationResult>,
   ): Promise<AiGenerationResult> {
     // Garde-fous économiques AVANT tout appel payant — cf. EntitlementsService.
@@ -173,6 +200,7 @@ export class AiGatewayService {
         provider: attemptOrder[0] ?? 'unknown',
         model: 'pending',
         prompt: promptForLog.slice(0, 2000),
+        promptVersion,
         status: 'RUNNING',
       },
     });
@@ -193,7 +221,11 @@ export class AiGatewayService {
             tokensUsed: result.tokensUsed,
             costEstimate: result.costEstimate,
             durationMs: result.durationMs,
-            resultUrl: taskType === 'generateText' || taskType === 'analyzeImage' ? null : result.content,
+            // generateAudio/transcribeAudio exclus comme generateText/analyzeImage : leur
+            // "content" est respectivement un data URI base64 (potentiellement volumineux) et
+            // du JSON structuré (segments) — ni l'un ni l'autre n'est une URL hébergée, jamais
+            // adaptés à une colonne de traçabilité prévue pour ça.
+            resultUrl: ['generateText', 'analyzeImage', 'generateAudio', 'transcribeAudio'].includes(taskType) ? null : result.content,
           },
         });
 

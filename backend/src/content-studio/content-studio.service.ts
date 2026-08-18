@@ -9,7 +9,7 @@ export interface CreatePieceParams {
   organizationId: string;
   campaignId: string;
   channel: string;
-  type: 'TEXT' | 'IMAGE' | 'VIDEO' | 'EMAIL' | 'LANDING_PAGE';
+  type: 'TEXT' | 'IMAGE' | 'VIDEO' | 'AUDIO' | 'EMAIL' | 'LANDING_PAGE';
   body?: string;
   assetId?: string;
   createdByUserId?: string;

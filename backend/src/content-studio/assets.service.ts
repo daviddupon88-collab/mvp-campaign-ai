@@ -4,7 +4,7 @@ import { StorageService } from '../storage/storage.service';
 
 export interface RegisterAssetParams {
   organizationId: string;
-  type: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+  type: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
   source: 'GENERATED' | 'UPLOADED';
   url: string;
   storageKey?: string; // renseigné uniquement si l'objet est réellement stocké par nous

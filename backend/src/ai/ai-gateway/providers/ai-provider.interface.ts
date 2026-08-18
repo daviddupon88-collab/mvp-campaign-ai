@@ -10,11 +10,40 @@ export interface GenerateTextParams {
 export interface GenerateImageParams {
   prompt: string;
   size?: string;
+  // Image de référence à ancrer la génération dessus (édition, pas une pure invention
+  // textuelle) — pour un fournisseur qui le supporte (OpenAI, cf. /v1/images/edits). Optionnel :
+  // un fournisseur texte-vers-image pur (Flux, Ideogram) l'ignore silencieusement, même
+  // convention que GenerateVideoParams.imageUrl pour Runway.
+  imageUrl?: string;
 }
 
 export interface GenerateVideoParams {
   prompt: string;
   durationSeconds?: number;
+  // Image de référence à animer/ancrer — pour Runway (image-to-video pur) c'est la première
+  // frame ; pour Google Veo (depuis le 2026-08-18) c'est une image de conditionnement transmise
+  // au modèle en plus du prompt texte (cf. GoogleVeoProvider.resolveImageForVeo), pour que la
+  // vidéo générée reste fidèle au produit réellement injecté plutôt qu'une pure invention
+  // textuelle. Optionnel — un fournisseur texte-vers-vidéo pur peut l'ignorer si non supporté.
+  imageUrl?: string;
+}
+
+export interface GenerateAudioParams {
+  prompt: string; // texte à synthétiser (narration/voix off)
+}
+
+// Timing d'un segment transcrit — sert de base à la génération de sous-titres (.srt), pas
+// seulement à afficher le texte : start/end sont indispensables pour synchroniser l'incrustation
+// avec l'audio réellement généré (cf. VideoAssemblyService), pas une estimation depuis le texte.
+export interface TranscriptSegment {
+  start: number; // secondes
+  end: number; // secondes
+  text: string;
+}
+
+export interface TranscribeAudioParams {
+  audioBuffer: Buffer;
+  mimeType: string;
 }
 
 export interface AiGenerationResult {
@@ -46,6 +75,16 @@ export interface AiProvider {
   generateText?(params: GenerateTextParams): Promise<AiGenerationResult>;
   generateImage?(params: GenerateImageParams): Promise<AiGenerationResult>;
   generateVideo?(params: GenerateVideoParams): Promise<AiGenerationResult>;
+  // Voix off / narration — cf. OpenAiProvider.generateAudio(). content renvoie un data URI
+  // (data:audio/...;base64,...), pas une URL hébergée : contrairement à generateImage/
+  // generateVideo, l'API TTS ne fournit aucune URL temporaire à re-héberger.
+  generateAudio?(params: GenerateAudioParams): Promise<AiGenerationResult>;
+
+  // Transcription (voix -> texte horodaté) — utilisée pour générer les sous-titres à partir de
+  // la narration déjà générée (cf. AiOrchestratorService), pas depuis le texte du script : le
+  // timing réel de la parole (rythme, pauses) ne peut venir que de l'audio effectivement produit.
+  // content renvoie du JSON stringifié (TranscriptSegment[]), même convention que analyzeImage.
+  transcribeAudio?(params: TranscribeAudioParams): Promise<AiGenerationResult>;
 
   // Analyse multimodale (texte + image) — utilisée pour la cohérence de marque et la
   // détection de marques déposées dans les visuels générés. Retourne du texte (le prompt

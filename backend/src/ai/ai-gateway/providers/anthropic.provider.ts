@@ -19,19 +19,37 @@ export class AnthropicProvider implements AiProvider {
     const start = Date.now();
     const model = 'claude-sonnet-5';
 
-    const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey ?? '',
-        'anthropic-version': '2023-06-01',
+    const response = await fetchWithTimeout(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey ?? '',
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          // 4000, pas 1000 : sur claude-sonnet-5, le thinking adaptatif est actif PAR DÉFAUT dès
+          // que `thinking` est omis (contrairement aux générations précédentes de modèles Claude)
+          // et partage le même budget que max_tokens — un plafond de 1000 tokens a été constaté en
+          // conditions réelles le 2026-08-16 entièrement consommé par le raisonnement interne,
+          // laissant AUCUN token pour la réponse visible (`textBlock` vide, cf. l'appel stratégie
+          // de AiOrchestratorService.generateCampaign). Non corrigé en désactivant le thinking
+          // (`{type:"disabled"}`) : ce provider est choisi précisément pour le raisonnement
+          // stratégique (cf. commentaire ci-dessus, "routage: raisonnement stratégique -> modèle
+          // plus fort") — le désactiver irait à l'encontre de l'intention du routage.
+          max_tokens: params.maxTokens ?? 4000,
+          messages: [{ role: 'user', content: params.prompt }],
+        }),
       },
-      body: JSON.stringify({
-        model,
-        max_tokens: params.maxTokens ?? 1000,
-        messages: [{ role: 'user', content: params.prompt }],
-      }),
-    });
+      // 60s, pas le défaut 20s : même raisonnement que OpenAiProvider — un budget de sortie plus
+      // large avec thinking actif prend plus de temps que les 1000 tokens précédents. Jamais
+      // confirmé en conditions réelles (l'appel Anthropic a échoué avant sur une clé API absente
+      // dans ce test), mais le risque est symétrique à celui constaté côté OpenAI le 2026-08-16 —
+      // corrigé préventivement plutôt que d'attendre une deuxième découverte du même problème.
+      60_000,
+    );
 
     if (!response.ok) {
       throw new Error(`Anthropic error: ${response.status} ${await response.text()}`);
@@ -52,7 +70,10 @@ export class AnthropicProvider implements AiProvider {
 
   private estimateCost(usage: { input_tokens?: number; output_tokens?: number } | undefined): number {
     if (!usage) return 0;
-    // Estimation grossière — à remplacer par la grille tarifaire réelle.
-    return ((usage.input_tokens ?? 0) * 0.003 + (usage.output_tokens ?? 0) * 0.015) / 1000;
+    // $2/$10 par 1M tokens (input/output) — tarif d'introduction de Claude Sonnet 5, rendu
+    // PERMANENT par Anthropic : la hausse prévue au 1er septembre 2026 vers $3/$15 a été
+    // annulée (vérifié le 2026-08-16). L'ancien calcul ($3/$15) surestimait donc le coût réel
+    // de chaque appel de 50%, en continu — pas seulement pendant une fenêtre temporaire.
+    return ((usage.input_tokens ?? 0) * 0.002 + (usage.output_tokens ?? 0) * 0.01) / 1000;
   }
 }

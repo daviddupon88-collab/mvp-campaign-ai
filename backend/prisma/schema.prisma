@@ -46,6 +46,7 @@ enum ContentType {
   TEXT
   IMAGE
   VIDEO
+  AUDIO
   EMAIL
   LANDING_PAGE
 }
@@ -58,9 +59,10 @@ enum GenerationStatus {
 }
 
 enum ModerationCheckType {
-  TOXICITY          // haine, violence, contenu explicite — via l'API de modération OpenAI
-  MISLEADING_CLAIMS // promesses commerciales trompeuses (santé, gains garantis, superlatifs abusifs)
-  TRADEMARK_IMAGE    // marque déposée ou logo tiers détecté dans un visuel généré
+  TOXICITY               // haine, violence, contenu explicite — via l'API de modération OpenAI
+  MISLEADING_CLAIMS      // promesses commerciales trompeuses (santé, gains garantis, superlatifs abusifs)
+  TRADEMARK_IMAGE         // marque déposée ou logo tiers détecté dans un visuel généré
+  OBJECTIVE_ACHIEVEMENT   // le contenu généré atteint-il pleinement l'objectif de la campagne ? (2026-08-18) — seul check dont l'échec ne connaît pas de FLAGGED "de jugement" (PASSED ou BLOCKED ; FLAGGED réservé à une panne du service IA lui-même)
 }
 
 enum ModerationStatus {
@@ -285,6 +287,7 @@ model Campaign {
 enum AssetType {
   IMAGE
   VIDEO
+  AUDIO
   DOCUMENT
 }
 

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiGatewayService } from '../ai/ai-gateway/ai-gateway.service';
+import { PROMPT_VERSIONS } from '../ai/prompt-versions';
 
 export interface BrandCheckInputText {
   label: string;
@@ -57,8 +58,15 @@ export class BrandConsistencyService {
     const ctx: BrandCtx = { organizationId, campaignId, purpose: 'brand_consistency' };
     const checks: BrandConsistencyRunResult['checks'] = [];
 
+    // UN SEUL appel `generateText` couvrant tous les textes de la campagne plutôt qu'un appel
+    // par texte — jusqu'à 5 appels facturés pour une seule campagne avant ce changement (retour
+    // utilisateur du 2026-08-17, même constat que ModerationService.checkMisleadingClaimsBatch).
+    const scoresByLabel = await this.scoreTextBatch(ctx, texts, brandKit);
     for (const input of texts) {
-      const result = await this.scoreText(ctx, input.text, brandKit);
+      const result = scoresByLabel.get(input.label) ?? {
+        score: 50,
+        summary: 'Évaluation indisponible (réponse incomplète du modèle)',
+      };
       await this.persistCheck(organizationId, campaignId, input.label, 'openai-brand-text', result);
       checks.push({ label: input.label, score: result.score, summary: result.summary });
     }
@@ -96,33 +104,43 @@ export class BrandConsistencyService {
     });
   }
 
-  // Compare un texte généré au ton éditorial et aux valeurs déclarées dans le Brand Kit.
-  private async scoreText(
+  // Compare chaque texte généré au ton éditorial et aux valeurs déclarées dans le Brand Kit —
+  // UN SEUL appel pour tous les textes de la campagne (cf. commentaire dans runCampaignBrandCheck).
+  private async scoreTextBatch(
     ctx: BrandCtx,
-    text: string,
+    texts: BrandCheckInputText[],
     brandKit: { toneOfVoice: string | null; valueProps: unknown },
-  ): Promise<{ score: number; summary: string; issues?: unknown }> {
+  ): Promise<Map<string, { score: number; summary: string; issues?: unknown }>> {
+    if (texts.length === 0) return new Map();
     if (this.useMock()) {
-      return { score: 82, summary: '(simulation) cohérence de ton correcte' };
+      return new Map(texts.map((t) => [t.label, { score: 82, summary: '(simulation) cohérence de ton correcte' }]));
     }
     try {
-      const prompt = `Tu évalues si un texte marketing respecte l'identité de marque suivante :
+      const itemsBlock = texts.map((t) => `[${t.label}]\n"""${t.text}"""`).join('\n\n');
+      const prompt = `Tu évalues si chacun des textes marketing suivants (identifiés par un label entre crochets) respecte l'identité de marque suivante :
 Ton éditorial attendu : ${brandKit.toneOfVoice ?? 'non précisé'}
 Arguments clés de la marque : ${JSON.stringify(brandKit.valueProps ?? [])}
 
-Texte à évaluer :
-"""${text}"""
+Réponds UNIQUEMENT en JSON strict : un tableau avec EXACTEMENT une entrée par label (mêmes labels que ci-dessous), au format :
+[{"label":"...","score":0-100,"summary":"phrase courte","issues":[{"issue":"...","suggestion":"..."}]}]
+Le score reflète l'adéquation du ton et la présence des arguments clés — pas la qualité rédactionnelle générale.
 
-Réponds UNIQUEMENT en JSON strict :
-{"score":0-100,"summary":"phrase courte","issues":[{"issue":"...","suggestion":"..."}]}
-Le score reflète l'adéquation du ton et la présence des arguments clés — pas la qualité rédactionnelle générale.`;
+Textes à évaluer :
+${itemsBlock}`;
 
-      const result = await this.aiGateway.generateText(ctx, { prompt }, 'openai');
-      const parsed = JSON.parse(result.content);
-      return { score: parsed.score, summary: parsed.summary, issues: parsed.issues };
+      const result = await this.aiGateway.generateText(ctx, { prompt }, 'openai', PROMPT_VERSIONS.brandConsistencyText);
+      const parsed = JSON.parse(result.content) as Array<{ label: string; score: number; summary: string; issues?: unknown }>;
+      const byLabel = new Map(parsed.map((item) => [item.label, item]));
+
+      const entries: Array<[string, { score: number; summary: string; issues?: unknown }]> = texts.map((t) => {
+        const item = byLabel.get(t.label);
+        if (!item) return [t.label, { score: 50, summary: 'Évaluation indisponible (réponse incomplète du modèle)' }];
+        return [t.label, { score: item.score, summary: item.summary, issues: item.issues }];
+      });
+      return new Map(entries);
     } catch (error) {
       // En cas d'échec, score neutre plutôt qu'une note pénalisante injustifiée.
-      return { score: 50, summary: `Évaluation indisponible (${error})` };
+      return new Map(texts.map((t) => [t.label, { score: 50, summary: `Évaluation indisponible (${error})` }]));
     }
   }
 
@@ -143,7 +161,7 @@ Style/ton général de la marque : ${brandKit.toneOfVoice ?? 'non précisé'}
 Réponds UNIQUEMENT en JSON strict :
 {"score":0-100,"summary":"phrase courte","issues":[{"issue":"...","suggestion":"..."}]}`;
 
-      const result = await this.aiGateway.analyzeImage(ctx, { prompt, imageUrl }, 'openai');
+      const result = await this.aiGateway.analyzeImage(ctx, { prompt, imageUrl }, 'openai', PROMPT_VERSIONS.brandConsistencyImage);
       const parsed = JSON.parse(result.content);
       return { score: parsed.score, summary: parsed.summary, issues: parsed.issues };
     } catch (error) {

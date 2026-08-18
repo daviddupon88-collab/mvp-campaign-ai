@@ -6,6 +6,7 @@ import { AiGatewayService } from '../ai/ai-gateway/ai-gateway.service';
 import { AnalyticsIngestionService } from './analytics-ingestion.service';
 import { BrandLearningService } from '../brand/brand-learning.service';
 import { EntitlementsService } from '../plans/entitlements.service';
+import { PROMPT_VERSIONS } from '../ai/prompt-versions';
 
 // Module 16 — AI Optimizer : "Chaque nuit, Campaign-ai analysera toutes les campagnes puis
 // proposera nouveaux textes / nouveaux visuels / nouveau ciblage / nouveau budget / nouveau
@@ -229,7 +230,7 @@ Propose 1 à 3 actions maximum, concrètes et directement actionnables par un ma
 
     try {
       const ctx = { organizationId, campaignId, purpose: 'optimizer' as const };
-      const result = await this.aiGateway.generateText(ctx, { prompt }, 'anthropic'); // raisonnement -> Claude, cf. chapitre 5.4 du Volume 2
+      const result = await this.aiGateway.generateText(ctx, { prompt }, 'anthropic', PROMPT_VERSIONS.optimizerRecommendation); // raisonnement -> Claude, cf. chapitre 5.4 du Volume 2
       const parsed = JSON.parse(result.content);
       return { summary: parsed.summary, details: { performance: parsed.performance, actions: parsed.actions } };
     } catch (error) {
