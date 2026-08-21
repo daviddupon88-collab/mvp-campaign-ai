@@ -8,6 +8,8 @@ import { RejectCampaignDto } from './dto/approval.dto';
 import { CampaignTemplatesService } from '../campaign-templates/campaign-templates.service';
 import { EntitlementsService } from '../plans/entitlements.service';
 import { mapChannelSlugsToPlatforms } from '../plans/plan-catalog';
+import { CreativeVariationService } from '../ai/creative-intelligence/creative-variation.service';
+import { CreativeConcept } from '../ai/creative-intelligence/creative-concept.types';
 
 export interface ApprovalActor {
   userId: string;
@@ -21,6 +23,7 @@ export class CampaignsService {
     @InjectQueue(CAMPAIGN_GENERATION_QUEUE) private readonly generationQueue: Queue,
     private readonly templatesService: CampaignTemplatesService,
     private readonly entitlements: EntitlementsService,
+    private readonly creativeVariation: CreativeVariationService,
   ) {}
 
   // Isolation multi-tenant systématique : toute requête est scopée par organizationId.
@@ -222,6 +225,19 @@ export class CampaignsService {
     // permet une relance fidèle depuis l'écran de détail sans redemander l'information.
     const productDescription = dto.productDescription?.trim() || campaign.productDescription || undefined;
 
+    // Audit forensique Mission 4.2 (P1-7) : createPiece() est purement additive
+    // (prisma.contentPiece.create, jamais de remplacement) et cette méthode ne supprimait/ne
+    // marquait jamais les pièces de la tentative précédente — une campagne régénérée plusieurs
+    // fois accumulait des ContentPiece obsolètes intermixées avec la nouvelle tentative, sans
+    // aucun champ pour les distinguer. Correctif NON destructif (jamais de suppression de
+    // contenu déjà généré, éventuellement déjà publié historiquement) : les pièces de la
+    // tentative précédente sont marquées ARCHIVED avant de relancer la génération — le contenu
+    // reste intégralement conservé en base, seulement signalé comme obsolète.
+    await this.prisma.contentPiece.updateMany({
+      where: { campaignId, status: { not: 'ARCHIVED' } },
+      data: { status: 'ARCHIVED' },
+    });
+
     await this.prisma.campaign.update({
       where: { id: campaignId },
       data: {
@@ -245,5 +261,25 @@ export class CampaignsService {
     });
 
     return this.getById(organizationId, campaignId);
+  }
+
+  // P0.12 — Variation créative (chantier "Creative Intelligence Engine & Video Quality Loop",
+  // 2026-08-18) : opt-in, jamais déclenché automatiquement par la génération — requiert une
+  // campagne déjà APPROVED (le concept a fait ses preuves). Résultat éphémère (jamais persisté,
+  // cf. plan) : de simples suggestions texte à examiner, pas un nouvel asset généré.
+  async generateCreativeVariations(organizationId: string, campaignId: string): Promise<CreativeConcept[]> {
+    const campaign = await this.getById(organizationId, campaignId);
+    if (campaign.status !== 'APPROVED') {
+      throw new BadRequestException('Seule une campagne déjà approuvée peut recevoir des variantes créatives');
+    }
+
+    const trace = await this.prisma.creativeGenerationTrace.findUnique({ where: { campaignId } });
+    if (!trace) {
+      throw new BadRequestException("Aucun concept créatif enregistré pour cette campagne (générée avant ce chantier, ou sans photo produit)");
+    }
+
+    const acceptedConcept = trace.creativeConcept as unknown as CreativeConcept;
+    const ctx = { organizationId, campaignId, purpose: 'campaign_generation' as const };
+    return this.creativeVariation.generateVariations(ctx, acceptedConcept);
   }
 }

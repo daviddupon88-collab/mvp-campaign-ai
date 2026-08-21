@@ -49,11 +49,21 @@ export class AiGatewayService {
   // affiné dynamiquement par la fiabilité récente observée (cf. reliabilityAdjustedOrder).
   private readonly fallbackChains: Record<TaskType, string[]> = {
     generateText: ['openai', 'anthropic', 'mock'],
-    generateImage: ['flux', 'ideogram', 'openai', 'mock'],
-    // runway APRÈS google-veo : Veo reste le fournisseur préféré (texte seul, pas besoin
-    // d'attendre le visuel), Runway un vrai repli fonctionnel (pas juste mock) quand Veo est
-    // indisponible — cf. RunwayProvider.
-    generateVideo: ['google-veo', 'runway', 'mock'],
+    // Flux et Ideogram retirés du repli le 2026-08-19 (même constat que Runway la veille) :
+    // REPLICATE_API_TOKEN et IDEOGRAM_API_KEY sont VIDES dans .env de cet environnement — chaque
+    // tentative échoue à coup sûr (401), ajoutant deux allers-retours HTTP inutiles avant le vrai
+    // échec, ET masquant l'erreur RÉELLE (ex. rejet par le système de modération d'OpenAI lui-même)
+    // derrière la dernière erreur 401 de la chaîne. Remettre 'flux'/'ideogram' ici suffira le jour
+    // où ces comptes sont configurés.
+    generateImage: ['openai', 'mock'],
+    // Runway retiré du repli le 2026-08-18 (constaté en conditions réelles) : le compte Runway
+    // de cet environnement n'est pas activé (pas de crédits) — chaque bascule Veo→Runway échoue
+    // donc SYSTÉMATIQUEMENT, ajoutant une latence réelle (soumission + tentative de polling)
+    // sans jamais pouvoir aboutir, avant l'échec final du plan. RunwayProvider reste dans le
+    // code et câblé dans `providers` (cf. constructeur) — remettre 'runway' ici suffira le jour
+    // où ce compte est activé, cf. RunwayProvider.resolvePromptImage pour le bug distinct déjà
+    // corrigé ce même jour (promptImage http:// rejeté par l'API Runway).
+    generateVideo: ['google-veo', 'mock'],
     // Un seul fournisseur voix off pour l'instant (OpenAI TTS) — pas d'alternative câblée,
     // contrairement aux autres tâches (repli sur un deuxième fournisseur réel avant mock).
     generateAudio: ['openai', 'mock'],
@@ -177,16 +187,20 @@ export class AiGatewayService {
     await this.entitlements.assertCreditsAvailable(ctx.organizationId);
     await this.entitlements.assertBudgetAvailable(ctx.organizationId);
 
-    // Plafonds dédiés (essai gratuit) : une vidéo (150 crédits) épuiserait à elle seule le
-    // pool de crédits de l'essai (60) — ces vérifications distinctes garantissent "10 images
-    // ET 1 vidéo incluses" indépendamment du solde de crédits restant. No-op sur les plans
-    // payants (maxImages/maxVideos = null). N'agit que sur la génération de campagne : les
-    // appels analyzeImage (modération, cohérence de marque) ne consomment jamais ces quotas.
+    // Plafonds dédiés (essai gratuit) : un storyboard vidéo complet (jusqu'à 3 plans × 150
+    // crédits) épuiserait à lui seul le pool de crédits de l'essai (650) — ces vérifications
+    // distinctes garantissent "10 images ET 1 campagne vidéo complète incluses"
+    // indépendamment du solde de crédits restant. No-op sur les plans payants
+    // (maxImages/maxVideos/maxVideoShotsPerCampaign = null). N'agit que sur la génération de
+    // campagne : les appels analyzeImage (modération, cohérence de marque) ne consomment
+    // jamais ces quotas. campaignId transmis pour assertVideoQuotaAvailable : distingue "un
+    // nouveau plan pour la campagne déjà en cours de génération" (jamais bloqué par le
+    // plafond de campagnes, cf. EntitlementsService) de "une toute nouvelle campagne vidéo".
     if (taskType === 'generateImage' && ctx.purpose === 'campaign_generation') {
       await this.entitlements.assertImageQuotaAvailable(ctx.organizationId);
     }
     if (taskType === 'generateVideo' && ctx.purpose === 'campaign_generation') {
-      await this.entitlements.assertVideoQuotaAvailable(ctx.organizationId);
+      await this.entitlements.assertVideoQuotaAvailable(ctx.organizationId, ctx.campaignId);
     }
 
     const attemptOrder = await this.buildAttemptOrder(taskType, providerName);
@@ -210,7 +224,7 @@ export class AiGatewayService {
       const provider = this.providers.get(name);
       if (!provider) continue;
       try {
-        const result = await call(provider);
+        const result = await this.callWithTransientRetry(() => call(provider), name, taskType);
 
         await this.prisma.aiGeneration.update({
           where: { id: generation.id },
@@ -251,6 +265,50 @@ export class AiGatewayService {
     });
     this.logger.error(`Tous les fournisseurs ont échoué pour "${taskType}" (${ctx.purpose}). Dernière erreur: ${lastError}`);
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  // Bug corrigé le 2026-08-19 (constaté sur plusieurs campagnes réelles la même nuit) : un
+  // simple timeout réseau transitoire (AbortError, ~60s configurés dans fetchWithTimeout, cf.
+  // chaque provider) sur UN SEUL appel faisait échouer tout le fournisseur immédiatement,
+  // basculant sur le suivant dans la chaîne de repli — sans fournisseur de repli restant
+  // (Runway/Flux/Ideogram retirés le 2026-08-18/19, cf. fallbackChains), ce timeout faisait
+  // échouer TOUTE la campagne, qui relançait alors le pipeline ENTIER depuis zéro via BullMQ
+  // (coût + temps perdus) pour retomber, une fois sur trois, sur un timeout différent ailleurs.
+  // Répète désormais jusqu'à 3 tentatives sur CE MÊME appel avant de considérer ce fournisseur
+  // en échec — uniquement pour les erreurs identifiées comme transitoires (timeout/réseau),
+  // jamais pour une erreur d'authentification, de quota ou de contenu (401/429/modération),
+  // qui échouerait de la même façon à chaque tentative et ne ferait que retarder l'échec.
+  private async callWithTransientRetry(
+    fn: () => Promise<AiGenerationResult>,
+    providerName: string,
+    taskType: TaskType,
+    maxAttempts = 3,
+  ): Promise<AiGenerationResult> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        if (!this.isTransientError(error) || attempt === maxAttempts) throw error;
+        const delayMs = 500 * attempt;
+        this.logger.warn(
+          `"${providerName}" pour "${taskType}" — tentative ${attempt}/${maxAttempts} échouée (timeout/réseau transitoire), nouvel essai dans ${delayMs}ms : ${error}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw lastError;
+  }
+
+  private isTransientError(error: unknown): boolean {
+    // AbortError (timeout, cf. fetchWithTimeout) arrive comme une DOMException, PAS une
+    // instance d'Error en Node.js — vérifié en premier, sans dépendre de `instanceof Error`,
+    // sinon ce garde-fou ne détecte jamais rien (bug constaté en écrivant le test de ce
+    // correctif : silencieusement inopérant, exactement comme en conditions réelles cette nuit).
+    if ((error as { name?: string } | null)?.name === 'AbortError') return true;
+    if (!(error instanceof Error)) return false;
+    return /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|fetch failed|network(?:ing)? error/i.test(error.message);
   }
 
   private async buildAttemptOrder(taskType: TaskType, providerName?: string): Promise<string[]> {

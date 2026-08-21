@@ -30,6 +30,13 @@ export interface GenerateVideoParams {
 
 export interface GenerateAudioParams {
   prompt: string; // texte à synthétiser (narration/voix off)
+  // Mission 4 Phase E — champs additifs, EXCLUSIVEMENT consommés par le benchmark TTS isolé
+  // (backend/src/scripts/mission4-tts-benchmark.ts), jamais par le pipeline de campagne normal
+  // (Correction obligatoire 5). `model` permet de forcer `gpt-4o-mini-tts` pour la comparaison
+  // (défaut `tts-1` inchangé si omis) ; `instructions` n'a d'effet que sur ce modèle (l'API
+  // OpenAI l'ignore pour `tts-1`/`tts-1-hd`, qui n'exposent aucun contrôle d'expressivité).
+  model?: 'tts-1' | 'gpt-4o-mini-tts';
+  instructions?: string;
 }
 
 // Timing d'un segment transcrit — sert de base à la génération de sous-titres (.srt), pas
@@ -61,6 +68,11 @@ export interface AiGenerationResult {
 export interface AnalyzeImageParams {
   prompt: string;
   imageUrl: string;
+  // Mission 4 Phase B — images SUPPLÉMENTAIRES pour un appel vision GROUPÉ (ex. comparer
+  // plusieurs plans entre eux, cf. VideoJudgeService.buildSceneConsistencyCriterion) : UN SEUL
+  // appel IA reçoit toutes les images, jamais N appels séparés. Optionnel et additif — les
+  // appelants à une seule image (analyse produit, cohérence de marque...) restent inchangés.
+  additionalImageUrls?: string[];
 }
 
 export interface ModerateTextResult {

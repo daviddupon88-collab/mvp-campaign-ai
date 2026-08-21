@@ -170,7 +170,14 @@ export class OpenAiProvider implements AiProvider {
   // autre asset généré par CampaignGenerationProcessor.registerGeneratedAudio().
   async generateAudio(params: GenerateAudioParams): Promise<AiGenerationResult> {
     const start = Date.now();
-    const model = 'tts-1';
+    // Mission 4 Phase E (Correction obligatoire 5) : `tts-1` reste le défaut TANT QUE le
+    // benchmark isolé (mission4-tts-benchmark.ts) n'a pas démontré un gain mesurable sur
+    // voiceDynamism/voicePacing sans régression d'intelligibilité — un `params.model` explicite
+    // (jamais renseigné par le pipeline de campagne normal) est le SEUL moyen de basculer.
+    const model = params.model ?? 'tts-1';
+    // `instructions` n'a de sens que pour gpt-4o-mini-tts — tts-1/tts-1-hd n'exposent aucun
+    // contrôle d'expressivité et l'API OpenAI ignore ce champ pour ces modèles.
+    const instructions = model === 'gpt-4o-mini-tts' ? params.instructions : undefined;
 
     const response = await fetchWithTimeout('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
@@ -178,7 +185,7 @@ export class OpenAiProvider implements AiProvider {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({ model, voice: 'onyx', input: params.prompt }),
+      body: JSON.stringify({ model, voice: 'onyx', input: params.prompt, ...(instructions ? { instructions } : {}) }),
     });
 
     if (!response.ok) {
@@ -190,10 +197,20 @@ export class OpenAiProvider implements AiProvider {
       content: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}`,
       provider: this.name,
       model,
-      // Tarif tts-1 : $0.015 / 1000 caractères — pas de "tokens" à proprement parler ici.
-      costEstimate: (params.prompt.length / 1000) * 0.015,
+      costEstimate: this.estimateAudioCost(model, params.prompt.length),
       durationMs: Date.now() - start,
     };
+  }
+
+  // Tarif tts-1 : $0.015 / 1000 caractères (facturation officielle, pas une approximation).
+  // gpt-4o-mini-tts : facturé au token (texte + audio généré), pas au caractère — estimation
+  // APPROXIMATIVE ici (ratio caractères/tokens moyen), suffisante pour comparer un ordre de
+  // grandeur dans le benchmark isolé (Phase E), jamais une source de coût réel facturable tant
+  // que ce modèle n'est pas adopté en production (le coût réel viendrait alors de `data.usage`,
+  // comme analyzeImage/generateText, pas de cette estimation).
+  private estimateAudioCost(model: string, promptLength: number): number {
+    if (model === 'gpt-4o-mini-tts') return (promptLength / 4 / 1_000_000) * 0.6 + (promptLength / 4 / 1_000_000) * 12;
+    return (promptLength / 1000) * 0.015;
   }
 
   // Transcription (Whisper) : sert exclusivement à générer les sous-titres de la vidéo finale
@@ -251,7 +268,8 @@ export class OpenAiProvider implements AiProvider {
   async analyzeImage(params: AnalyzeImageParams): Promise<AiGenerationResult> {
     const start = Date.now();
     const model = 'gpt-5';
-    const imageUrl = await this.toInlineImageUrl(params.imageUrl);
+    const allImageUrls = [params.imageUrl, ...(params.additionalImageUrls ?? [])];
+    const inlinedImageUrls = await Promise.all(allImageUrls.map((url) => this.toInlineImageUrl(url)));
 
     const response = await fetchWithTimeout(
       'https://api.openai.com/v1/chat/completions',
@@ -268,24 +286,29 @@ export class OpenAiProvider implements AiProvider {
               role: 'user',
               content: [
                 { type: 'text', text: params.prompt },
-                { type: 'image_url', image_url: { url: imageUrl } },
+                ...inlinedImageUrls.map((url) => ({ type: 'image_url', image_url: { url } })),
               ],
             },
           ],
           response_format: { type: 'json_object' },
-          // 2500, pas 1500 : même raison que generateText() — gpt-5 (raisonnement) partage le
-          // budget entre analyse interne et JSON de sortie ; 1500 a produit une réponse TRONQUÉE
-          // en conditions réelles le 2026-08-18 (VisualDnaService.extract, "Unexpected end of
-          // JSON input") sur un prompt demandant 6 champs (dont plusieurs tableaux), plus
-          // verbeux que les usages historiques (analyse produit : 4 champs). 400 avait déjà
-          // produit un contenu totalement vide le 2026-08-16 (cf. AiOrchestratorService.
-          // analyzeProductImage) — same schéma, prompt plus exigeant = budget insuffisant.
-          max_completion_tokens: 2500,
+          // 4000, pas 2500 : même raison que generateText() — gpt-5 (raisonnement) partage le
+          // budget entre analyse interne et JSON de sortie. Historique des paliers déjà atteints
+          // en conditions réelles : 400 -> contenu totalement vide (2026-08-16, analyse produit
+          // 4 champs) ; 1500 -> réponse TRONQUÉE (2026-08-18, VisualDnaService, 6 champs) ; 2500
+          // -> à nouveau contenu VIDE (raw:"") constaté le 2026-08-18 lors du test réel du nouveau
+          // schéma ProductVisionAnalysis (17 champs, plusieurs tableaux — le plus verbeux des
+          // prompts vision du projet à ce jour). Alignée sur generateText() (déjà à 4000 pour la
+          // même raison) plutôt que de retenter un palier intermédiaire spécifique à ce schéma.
+          max_completion_tokens: 4000,
         }),
       },
-      // 60s, pas le défaut 20s : même raison que generateText() — un budget de sortie plus
-      // large (vision + raisonnement) prend plus de temps que les 400 tokens précédents.
-      60_000,
+      // 120s, pas 60s : bug corrigé le 2026-08-19, constaté sur PLUSIEURS campagnes réelles la
+      // même nuit — cet appel précis (analyse Visual DNA sur l'image PRODUITE par generateImage,
+      // donc un gros payload base64 en entrée, cf. toInlineImageUrl) échouait de façon
+      // SYSTÉMATIQUE en AbortError à 60s, à chaque tentative, sur chaque campagne testée —
+      // jamais aléatoire. Combinaison image volumineuse en entrée + 4000 tokens de sortie
+      // structurée manifestement plus lente que les 60s qui suffisent à generateImage seul.
+      120_000,
     );
 
     if (!response.ok) {

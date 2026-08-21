@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiProvider, GenerateVideoParams, AiGenerationResult } from './ai-provider.interface';
 import { fetchWithTimeout } from '../../../common/http/fetch-with-timeout';
+import { resolveMediaBuffer } from '../../../common/http/resolve-media-buffer';
 
 // Provider Runway (api.dev.runwayml.com) : génération vidéo par image-to-video — contrairement
 // à Google Veo (texte seul), Runway exige une image source (params.imageUrl : le visuel déjà
@@ -33,6 +34,7 @@ export class RunwayProvider implements AiProvider {
     // AiOrchestratorService) est arrondie à la plus proche plutôt que rejetée.
     const requested = params.durationSeconds ?? 8;
     const duration = requested <= 7 ? 5 : 10;
+    const promptImage = await this.resolvePromptImage(params.imageUrl);
 
     const submitRes = await fetchWithTimeout('https://api.dev.runwayml.com/v1/image_to_video', {
       method: 'POST',
@@ -43,7 +45,7 @@ export class RunwayProvider implements AiProvider {
       },
       body: JSON.stringify({
         model: RunwayProvider.MODEL,
-        promptImage: params.imageUrl,
+        promptImage,
         promptText: params.prompt.slice(0, 1000), // limite documentée côté Runway
         ratio: '720:1280', // portrait — cohérent avec l'aspectRatio 9:16 déjà utilisé par Google Veo
         duration,
@@ -61,6 +63,24 @@ export class RunwayProvider implements AiProvider {
       costEstimate: (estimatedCost?.credits ?? duration * 5) * RunwayProvider.USD_PER_CREDIT,
       durationMs: Date.now() - start,
     };
+  }
+
+  // Bug corrigé le 2026-08-18 (constaté en conditions réelles — bascule Veo→Runway) : Runway
+  // n'accepte promptImage QUE sous 3 formes (https://, runway:// ou data:image/...;base64,...) —
+  // jamais un http:// brut, cf. son propre schéma de validation. Or referenceImageUrl (passé par
+  // AiOrchestratorService) est souvent servi par NOTRE stockage local en dev (http://localhost:
+  // .../uploads/...), une URL que Runway ne pourrait de toute façon jamais atteindre depuis ses
+  // serveurs même si le préfixe passait. On récupère nous-mêmes les octets (resolveMediaBuffer,
+  // déjà utilisé ailleurs pour ce même besoin) et on les réinjecte en data URI — la même
+  // information, sous une forme que l'API accepte et n'a pas besoin d'aller chercher elle-même.
+  private async resolvePromptImage(imageUrl: string): Promise<string> {
+    if (/^https:\/\//.test(imageUrl) || /^runway:\/\//.test(imageUrl) || /^data:image\//.test(imageUrl)) {
+      return imageUrl;
+    }
+    const buffer = await resolveMediaBuffer(imageUrl);
+    const extension = /\.(png|jpe?g|webp|gif)(?:$|\?)/i.exec(imageUrl)?.[1]?.toLowerCase() ?? 'png';
+    const mimeSubtype = extension === 'jpg' ? 'jpeg' : extension;
+    return `data:image/${mimeSubtype};base64,${buffer.toString('base64')}`;
   }
 
   // Flux asynchrone (soumission puis polling) — même contrat que GoogleVeoProvider : l'appelant

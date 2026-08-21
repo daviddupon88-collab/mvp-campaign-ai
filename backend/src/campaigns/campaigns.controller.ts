@@ -81,4 +81,12 @@ export class CampaignsController {
   regenerate(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CreateCampaignDto) {
     return this.campaignsService.regenerate(user.organizationId, id, dto);
   }
+
+  // P0.12 (chantier "Creative Intelligence Engine & Video Quality Loop", 2026-08-18) — opt-in,
+  // uniquement sur une campagne déjà APPROVED, résultat éphémère (jamais persisté).
+  @Post(':id/creative-variations')
+  @Roles('EDITOR', 'MARKETING_MANAGER', 'ADMIN', 'OWNER')
+  generateCreativeVariations(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.campaignsService.generateCreativeVariations(user.organizationId, id);
+  }
 }

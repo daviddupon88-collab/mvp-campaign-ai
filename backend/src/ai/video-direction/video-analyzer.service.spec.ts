@@ -53,7 +53,7 @@ jest.mock('fluent-ffmpeg', () => {
   return fn;
 });
 
-import { VideoAnalyzerService } from './video-analyzer.service';
+import { VideoAnalyzerService, classifyMotionLevel } from './video-analyzer.service';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { VisualDna } from './visual-dna.service';
 
@@ -84,6 +84,18 @@ describe('VideoAnalyzerService.analyze', () => {
     mockNextFailure.message = null;
     mockFfprobeDuration.value = 6;
     mockFfprobeImpl.mockClear();
+  });
+
+  it("ADN visuel de repli (isFallback=true) : fidélité neutre, dataAvailable=false, AUCUN appel de vérification déclenché (audit forensique Mission 4.2, P0-1)", async () => {
+    const gateway = buildGatewayMock(JSON.stringify({ matches: true, score: 90, mismatches: [] }));
+    const service = new VideoAnalyzerService(gateway);
+
+    const result = await service.analyze(CTX, 'data:video/mp4;base64,ZmFrZQ==', { visualDna: { ...VISUAL_DNA, isFallback: true } });
+
+    expect(result.visualFidelity.dataAvailable).toBe(false);
+    expect(result.visualFidelity.passed).toBe(true); // ne bloque jamais la génération sur une panne sans rapport
+    expect(result.passed).toBe(true);
+    expect(gateway.analyzeImage).not.toHaveBeenCalled(); // pas de comparaison hallucinatoire contre un ADN vide
   });
 
   it('aucun gel détecté + fidélité élevée : passed=true, qualityScore proche de 100', async () => {
@@ -169,5 +181,27 @@ describe('VideoAnalyzerService.analyze', () => {
     const result = await service.analyze(CTX, 'data:video/mp4;base64,ZmFrZQ==', { visualDna: VISUAL_DNA });
 
     expect(result.visualFidelity.passed).toBe(false);
+  });
+});
+
+describe('Mission 4 Phase C — classifyMotionLevel (bandes nommées sur le score de mouvement déjà mesuré)', () => {
+  it.each([
+    [0, 'STATIC'],
+    [19, 'STATIC'],
+    [20, 'LOW'],
+    [49, 'LOW'],
+    [50, 'ADEQUATE'],
+    [84, 'ADEQUATE'],
+    [85, 'HIGH'],
+    [94, 'HIGH'],
+    [95, 'EXCESSIVE'],
+    [100, 'EXCESSIVE'],
+  ] as const)('score %i -> %s', (score, level) => {
+    expect(classifyMotionLevel(score)).toBe(level);
+  });
+
+  it('borne les scores hors [0,100] plutôt que de planter', () => {
+    expect(classifyMotionLevel(-10)).toBe('STATIC');
+    expect(classifyMotionLevel(150)).toBe('EXCESSIVE');
   });
 });

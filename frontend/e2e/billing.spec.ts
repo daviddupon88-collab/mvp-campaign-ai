@@ -33,11 +33,16 @@ test.describe('Facturation et grille tarifaire', () => {
     await registerAndReachDashboard(page, email, password);
     await page.goto('/settings/billing');
 
-    // --- Quota d'essai : 0 crédit consommé sur les 300 inclus (aucune campagne créée) —
+    // --- Quota d'essai : 0 crédit consommé sur les crédits inclus (aucune campagne créée) —
     //     preuve que GET /plans/usage reflète le vrai solde de Subscription, pas une valeur
-    //     par défaut du frontend. ---
+    //     par défaut du frontend. Valeur alignée sur PLAN_CATALOG.trial.aiCreditsIncluded
+    //     (plan-catalog.ts) — actuellement 50000, TEMPORAIRE (2026-08-18, cf. commentaire sur
+    //     cette ligne côté backend) : remettre "0 / 1100" ici quand cette valeur est revertée.
+    //     Ce test était déjà désynchronisé AVANT ce chantier (hardcodait "0 / 300", alors que
+    //     le backend était déjà à 1100 depuis plus tôt le même jour) — jamais détecté faute
+    //     d'avoir fait tourner cette suite Playwright entre-temps. ---
     await expect(page.getByText('AI credits used this month')).toBeVisible();
-    await expect(page.getByText('0 / 300')).toBeVisible();
+    await expect(page.getByText('0 / 50000')).toBeVisible();
     await expect(page.getByText(/Free trial — ends on/)).toBeVisible();
 
     // --- Grille de plans : GET /plans exclut 'trial' (non sélectionnable) — les 4 plans

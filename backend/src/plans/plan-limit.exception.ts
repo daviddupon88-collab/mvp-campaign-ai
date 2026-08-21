@@ -9,7 +9,7 @@ import { ForbiddenException } from '@nestjs/common';
 export interface PlanLimitExceededPayload {
   message: string;
   code: 'PLAN_LIMIT_EXCEEDED';
-  limitType: 'credits' | 'seats' | 'activeCampaigns' | 'channels' | 'images' | 'videos' | 'socialPosts' | 'optimizerRuns';
+  limitType: 'credits' | 'seats' | 'activeCampaigns' | 'channels' | 'images' | 'videos' | 'videoShots' | 'socialPosts' | 'optimizerRuns';
   currentPlan: string;
   current: number;
   limit: number;

@@ -38,7 +38,7 @@ describe('VisualDnaService.extract', () => {
     expect(dna.logoOrBrandMarks).toBe('logo brodé sur le talon');
   });
 
-  it('JSON malformé : repli sur des valeurs neutres, raw préservé, ne lève jamais', async () => {
+  it('JSON malformé aux 2 tentatives : repli sur des valeurs neutres, raw préservé, isFallback=true, ne lève jamais (audit forensique Mission 4.2, P0-1)', async () => {
     const gateway = buildGatewayMock('Désolé, je ne peux pas analyser cette image.');
     const service = new VisualDnaService(gateway);
 
@@ -48,6 +48,30 @@ describe('VisualDnaService.extract', () => {
     expect(dna.colors).toEqual([]);
     expect(dna.logoOrBrandMarks).toBeNull();
     expect(dna.raw).toBe('Désolé, je ne peux pas analyser cette image.');
+    expect(dna.isFallback).toBe(true);
+    expect(gateway.analyzeImage).toHaveBeenCalledTimes(2);
+  });
+
+  it('1ère tentative malformée, 2e exploitable : retour de la 2e tentative, isFallback=false (audit forensique Mission 4.2, P0-1)', async () => {
+    const gateway = {
+      analyzeImage: jest
+        .fn()
+        .mockResolvedValueOnce({ content: 'Désolé, illisible.', provider: 'openai', model: 'gpt-vision', durationMs: 10 })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({ productCategory: 'sac', colors: ['noir'], materials: [], shape: '', distinctiveFeatures: [], logoOrBrandMarks: null }),
+          provider: 'openai',
+          model: 'gpt-vision',
+          durationMs: 10,
+        }),
+    } as unknown as AiGatewayService;
+    const service = new VisualDnaService(gateway);
+
+    const dna = await service.extract(CTX, 'https://example.com/photo.png');
+
+    expect(dna.productCategory).toBe('sac');
+    expect(dna.colors).toEqual(['noir']);
+    expect(dna.isFallback).toBe(false);
+    expect(gateway.analyzeImage).toHaveBeenCalledTimes(2);
   });
 
   it('logoOrBrandMarks absent (null explicite du modèle) : reste null, pas une chaîne "null"', async () => {

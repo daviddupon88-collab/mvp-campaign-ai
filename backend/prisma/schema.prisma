@@ -143,6 +143,9 @@ model Organization {
   brandMemoryEntries        BrandMemoryEntry[]
   brandMemoryContradictions BrandMemoryContradiction[]
 
+  productIntelligenceProfiles ProductIntelligenceProfile[]
+  creativeGenerationTraces    CreativeGenerationTrace[]
+
   metaCapiConfig MetaCapiConfig?
 
   @@map("organizations")
@@ -279,6 +282,7 @@ model Campaign {
   contentPieces            ContentPiece[]
   calendarEntries          CalendarEntry[]
   trackedClicks            TrackedClick[]
+  creativeGenerationTrace  CreativeGenerationTrace?
 
   @@index([organizationId])
   @@map("campaigns")
@@ -639,6 +643,103 @@ model AiGeneration {
   @@index([organizationId, purpose])
   @@index([campaignId])
   @@map("ai_generations")
+}
+
+// Product Intelligence Profile (chantier "Product Intelligence & Creative Intelligence Engine
+// V2", P0.3, 2026-08-18) : source de vérité centrale pour toute génération publicitaire
+// concernant un produit — cf. ProductIntelligenceService (backend/src/ai/product-intelligence/).
+// Clé de cache = (organizationId, imageHash) : une même photo produit ne relance jamais les
+// appels IA de vision/identification pour une nouvelle campagne (P1.7).
+model ProductIntelligenceProfile {
+  id             String @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  imageHash      String // sha256 du contenu de l'image — clé de cache, pas un identifiant humain
+  sourceImageUrl String // référence humaine/debug uniquement, jamais utilisée pour le cache
+  profileVersion Int    @default(1)
+
+  category    String?
+  subcategory String?
+  productType String?
+  brand       String?
+  productName String?
+  model       String?
+
+  visionAnalysis Json // ProductVisionAnalysis complet (cf. product-intelligence.types.ts)
+  identification Json // ProductIdentificationResult complet
+
+  features Json? // string[]
+  benefits Json? // string[]
+  usps     Json? // string[]
+
+  visibleClaims    Json? // string[] — transcrits depuis la vision, jamais vérifiés par ce seul champ
+  verifiedClaims   Json? // Claim[] — [] tant que le Web Research réel n'est pas branché (P1)
+  unverifiedClaims Json? // Claim[] ou string[]
+
+  targetAudience     String?
+  customerProblems   Json?
+  customerNeeds      Json?
+  customerObjections Json?
+  competitors        Json?
+  marketingAngles    Json?
+  keywords           Json?
+  trends             Json?
+
+  sources Json? // Source[] — cf. web-research.types.ts
+  // Ne vaut JAMAIS "REAL" tant qu'aucun WebResearchProvider réel n'est configuré (règle absolue
+  // du brief) — gouverné exclusivement par WebResearchService, jamais mis à REAL ailleurs.
+  webResearchStatus String @default("NOT_CONFIGURED") // NOT_CONFIGURED | MOCK | REAL
+
+  confidence  Float // 0-1, confiance globale du profil
+  lastUpdated DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@unique([organizationId, imageHash])
+  @@index([organizationId])
+  @@map("product_intelligence_profiles")
+}
+
+// Creative Generation Trace (P0.11, chantier "Creative Intelligence Engine & Video Quality
+// Loop", 2026-08-18) : trace d'observabilité d'UNE génération — répond directement aux
+// questions du brief (pourquoi cette scène a été régénérée, quel provider, combien ça a coûté,
+// pourquoi la vidéo a été acceptée/refusée). Un seul enregistrement par campagne (@unique sur
+// campaignId, upsert) : cette trace décrit la génération la PLUS RÉCENTE, pas un historique
+// multi-tentatives — hors périmètre explicite de ce chantier (cf. plan). Distinct de
+// AiGeneration (une ligne par appel IA individuel, déjà en place) : agrège plusieurs appels PLUS
+// des décisions purement déterministes (répétition de plans, réparations ffmpeg) qui ne
+// correspondent à aucun appel IA unique.
+model CreativeGenerationTrace {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaignId     String       @unique
+  campaign       Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  creativeIntelligence Json // CreativeIntelligence complet (P0.1)
+  creativeConcept      Json // CreativeConcept complet (P0.2)
+  shotPlanVersions     Json // [{ attempt, shots: Shot[], repetitionWarnings }] — P0.3/P0.4
+  judgeAttempts        Json // [{ attempt, criteria, globalScore, verdict }] — P0.5
+  repairs              Json // [{ attempt, sceneId, criterion, strategy, reason }] — P0.6/P0.7
+  costEstimate         Json // { checkpointA, checkpointB } — P0.9
+  finalOutcome         String // 'PASSED' | 'REPAIR_EXHAUSTED' | 'SKIPPED_NO_VIDEO'
+
+  // Phase Q (chantier "Optimisation du pipeline vidéo — V2.1", 2026-08-19) — buildQualityReport
+  // (quality-report.ts) était déjà calculé avant ce chantier, mais UNIQUEMENT pour construire le
+  // message d'erreur affiché à l'échec ; jamais persisté. `report` corrige ça : le rapport
+  // structuré complet (défauts, cause racine, action recommandée, compteurs Phase Q) est
+  // désormais conservé sur les 3 branches (PASSED/SKIPPED_NO_VIDEO/REPAIR_EXHAUSTED), pas
+  // seulement reconstruit après coup depuis judgeAttempts/repairs.
+  report          Json?
+  elapsedMs       Int? // durée totale (génération + Quality Loop + escalades), wall-clock
+  attemptCount    Int? // cycles Quality Loop consommés au total, toutes escalades confondues
+  escalationLevel String? // 'SCENE' | 'STORYBOARD' | 'CONCEPT' — plus haut niveau atteint
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("creative_generation_traces")
 }
 
 model Subscription {

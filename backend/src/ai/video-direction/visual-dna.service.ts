@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { parseAiJson } from '../../common/parsing/parse-ai-json';
 import { AiGatewayService, AiCallContext } from '../ai-gateway/ai-gateway.service';
 import { PROMPT_VERSIONS } from '../prompt-versions';
 
@@ -15,6 +16,11 @@ export interface VisualDna {
   distinctiveFeatures: string[];
   logoOrBrandMarks: string | null;
   raw: string; // réponse brute conservée pour debug/repli, même principe que ailleurs dans ce fichier
+  // Audit forensique Mission 4.2 (P0-1) : true si les DEUX tentatives d'extraction ont échoué et
+  // que cet objet est le repli neutre — un consommateur (VideoAnalyzerService, VideoDirectorService)
+  // ne doit JAMAIS traiter un ADN visuel de repli comme une référence réelle du produit. Optionnel
+  // (absent = false, comportement historique) pour ne pas casser les fixtures de test existantes.
+  isFallback?: boolean;
 }
 
 const FALLBACK_VISUAL_DNA: Omit<VisualDna, 'raw'> = {
@@ -43,17 +49,25 @@ export class VisualDnaService {
 Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact :
 {"productCategory":"...","colors":["...","..."],"materials":["...","..."],"shape":"...","distinctiveFeatures":["...","..."],"logoOrBrandMarks":"..."|null}`;
 
-    const result = await this.aiGateway.analyzeImage(ctx, { prompt, imageUrl }, 'openai', PROMPT_VERSIONS.visualDna);
-    return this.parse(result.content);
+    // Audit forensique Mission 4.2 (P0-1) : cet appel est le socle de fidélité de toute
+    // l'architecture Shot Plan — un simple aléa de formatage ne doit pas suffire à le vider,
+    // même discipline de retry unique que le Shot Plan et les critères texte du Video Judge.
+    const first = await this.aiGateway.analyzeImage(ctx, { prompt, imageUrl }, 'openai', PROMPT_VERSIONS.visualDna);
+    const parsedFirst = this.tryParse(first.content);
+    if (parsedFirst) return { ...parsedFirst, raw: first.content, isFallback: false };
+
+    this.logger.warn('Réponse d\'extraction de l\'ADN visuel non conforme au format JSON attendu, nouvel essai avant repli neutre.');
+    const second = await this.aiGateway.analyzeImage(ctx, { prompt, imageUrl }, 'openai', PROMPT_VERSIONS.visualDna);
+    const parsedSecond = this.tryParse(second.content);
+    if (parsedSecond) return { ...parsedSecond, raw: second.content, isFallback: false };
+
+    this.logger.warn("Réponse d'extraction de l'ADN visuel non conforme au format JSON attendu après 2 tentatives, repli neutre conservé (isFallback=true).");
+    return { ...FALLBACK_VISUAL_DNA, raw: second.content, isFallback: true };
   }
 
-  // Même principe de repli que AiOrchestratorService.formatProductAnalysis : un modèle qui ne
-  // respecte pas le format JSON demandé ne doit jamais faire échouer la génération de campagne
-  // — repli sur des valeurs neutres, `raw` conservé pour qu'un validateur humain (ou un futur
-  // debug) puisse voir ce qui a réellement été renvoyé.
-  private parse(raw: string): VisualDna {
+  private tryParse(raw: string): Omit<VisualDna, 'raw' | 'isFallback'> | null {
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = parseAiJson<any>(raw);
       return {
         productCategory: typeof parsed.productCategory === 'string' ? parsed.productCategory : FALLBACK_VISUAL_DNA.productCategory,
         colors: Array.isArray(parsed.colors) ? parsed.colors : FALLBACK_VISUAL_DNA.colors,
@@ -61,11 +75,9 @@ Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact :
         shape: typeof parsed.shape === 'string' ? parsed.shape : FALLBACK_VISUAL_DNA.shape,
         distinctiveFeatures: Array.isArray(parsed.distinctiveFeatures) ? parsed.distinctiveFeatures : FALLBACK_VISUAL_DNA.distinctiveFeatures,
         logoOrBrandMarks: typeof parsed.logoOrBrandMarks === 'string' ? parsed.logoOrBrandMarks : null,
-        raw,
       };
-    } catch (error) {
-      this.logger.warn(`Réponse d'extraction de l'ADN visuel non conforme au format JSON attendu, repli neutre conservé: ${error}`);
-      return { ...FALLBACK_VISUAL_DNA, raw };
+    } catch {
+      return null;
     }
   }
 }

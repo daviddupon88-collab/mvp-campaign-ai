@@ -124,6 +124,16 @@ export class EntitlementsService {
   // Un compte n'est bloqué que si À LA FOIS le quota du plan ET le solde de packs achetés
   // sont épuisés — un client qui a acheté un pack continue de fonctionner même si son
   // quota mensuel est à zéro, tant que son solde extraCredits n'est pas lui-même épuisé.
+  // P0.9 (chantier "Creative Intelligence Engine & Video Quality Loop", 2026-08-18) — extrait
+  // l'arithmétique déjà en dur dans assertCreditsAvailable() ci-dessous pour que
+  // CostControlService puisse ESTIMER un coût à venir contre le solde réel, sans dupliquer la
+  // formule ni interroger Subscription une 2e fois indépendamment.
+  async getRemainingCredits(organizationId: string): Promise<number> {
+    const subscription = await this.prisma.subscription.findUnique({ where: { organizationId } });
+    if (!subscription) throw new NotFoundException('Abonnement introuvable pour cette organisation');
+    return Math.max(0, subscription.aiCreditsIncluded - subscription.aiCreditsUsed) + subscription.extraCredits;
+  }
+
   async assertCreditsAvailable(organizationId: string): Promise<void> {
     const subscription = await this.prisma.subscription.findUnique({ where: { organizationId } });
     // NotFoundException : même correction et même raison qu'assertActiveSubscription() ci-dessus.
@@ -189,16 +199,76 @@ export class EntitlementsService {
     }
   }
 
-  async assertVideoQuotaAvailable(organizationId: string): Promise<void> {
+  // Deux plafonds indépendants (cf. commentaires sur PlanDefinition.maxVideos /
+  // maxVideoShotsPerCampaign dans plan-catalog.ts) :
+  //  1. maxVideoShotsPerCampaign borne le nombre de CLIPS déjà réussis DANS cette campagne —
+  //     vérifié en premier, et seul plafond qui peut interrompre un storyboard EN COURS de
+  //     génération (2e/3e plan d'une même campagne).
+  //  2. maxVideos borne le nombre de CAMPAGNES DISTINCTES ayant déjà eu droit à une vidéo —
+  //     ne s'applique qu'à une NOUVELLE campagne (dont aucun clip n'a encore réussi) ; une
+  //     campagne déjà en cours de génération vidéo n'est jamais bloquée par ce plafond-là au
+  //     milieu de son propre storyboard, même si elle est la campagne "consommée".
+  // Bug corrigé le 2026-08-18 : l'ancienne version comptait CHAQUE clip (tous plans confondus)
+  // comme "une vidéo" via un unique plafond `maxVideos: 1` — la génération du 2e plan d'une
+  // même campagne échouait donc systématiquement, dégradant tout storyboard à 1 seul plan figé.
+  // tx optionnel (Phase M, chantier "Optimisation du pipeline vidéo — V2.1", 2026-08-19) — même
+  // pattern déjà établi par assertOptimizerRunAvailable ci-dessous : englobe la lecture dans la
+  // même transaction que l'écriture qui suit, quand l'appelant le souhaite. Disponible pour un
+  // usage futur plus strict (cf. plan, "Hors périmètre") ; ce chantier l'utilise en lecture seule
+  // via getRemainingVideoShotSlots pour plafonner un lot de génération parallèle une seule fois
+  // en amont, plutôt que de fiabiliser CHAQUE appel individuel par une réservation atomique.
+  async assertVideoQuotaAvailable(
+    organizationId: string,
+    campaignId?: string,
+    tx: Pick<PrismaService, 'aiGeneration'> = this.prisma,
+  ): Promise<void> {
     const plan = await this.getCurrentPlan(organizationId);
-    if (plan.maxVideos === null) return;
 
-    const count = await this.prisma.aiGeneration.count({
-      where: { organizationId, taskType: 'generateVideo', purpose: 'campaign_generation', status: 'SUCCEEDED' },
-    });
-    if (count >= plan.maxVideos) {
-      throw this.buildLimitException('videos', plan, count, plan.maxVideos, 'de vidéos IA de l\'essai');
+    if (plan.maxVideoShotsPerCampaign !== null && campaignId) {
+      const shotsForThisCampaign = await tx.aiGeneration.count({
+        where: { organizationId, campaignId, taskType: 'generateVideo', purpose: 'campaign_generation', status: 'SUCCEEDED' },
+      });
+      if (shotsForThisCampaign >= plan.maxVideoShotsPerCampaign) {
+        throw this.buildLimitException('videoShots', plan, shotsForThisCampaign, plan.maxVideoShotsPerCampaign, 'de plans vidéo pour cette campagne');
+      }
     }
+
+    if (plan.maxVideos !== null) {
+      // Campagnes DISTINCTES (autres que la campagne courante) ayant déjà au moins un clip
+      // réussi — la campagne courante ne doit jamais se compter elle-même, sinon son propre
+      // 2e/3e plan la ferait échouer dès qu'elle a son 1er clip réussi.
+      const otherVideoCampaigns = await tx.aiGeneration.findMany({
+        where: {
+          organizationId,
+          taskType: 'generateVideo',
+          purpose: 'campaign_generation',
+          status: 'SUCCEEDED',
+          campaignId: campaignId ? { not: campaignId } : undefined,
+        },
+        distinct: ['campaignId'],
+        select: { campaignId: true },
+      });
+      const count = otherVideoCampaigns.filter((g) => g.campaignId !== null).length;
+      if (count >= plan.maxVideos) {
+        throw this.buildLimitException('videos', plan, count, plan.maxVideos, 'de campagnes vidéo de l\'essai');
+      }
+    }
+  }
+
+  // Phase M — lecture seule du nombre de plans vidéo ENCORE disponibles pour cette campagne
+  // (maxVideoShotsPerCampaign - déjà réussis), utilisée par AiOrchestratorService pour plafonner
+  // la TAILLE d'un lot de génération parallèle avant de le lancer — une seule lecture fixe le lot,
+  // élimine le TOCTOU (plusieurs vérifications concurrentes indépendantes lisant le même compte
+  // avant qu'aucune n'ait persisté) SANS transaction distribuée par appel. `null` = illimité
+  // (plan.maxVideoShotsPerCampaign === null) : jamais plafonné dans ce cas.
+  async getRemainingVideoShotSlots(organizationId: string, campaignId: string): Promise<number | null> {
+    const plan = await this.getCurrentPlan(organizationId);
+    if (plan.maxVideoShotsPerCampaign === null) return null;
+
+    const shotsForThisCampaign = await this.prisma.aiGeneration.count({
+      where: { organizationId, campaignId, taskType: 'generateVideo', purpose: 'campaign_generation', status: 'SUCCEEDED' },
+    });
+    return Math.max(0, plan.maxVideoShotsPerCampaign - shotsForThisCampaign);
   }
 
   // Publications RÉELLES uniquement (status PUBLISHED) — une tentative échouée ne doit

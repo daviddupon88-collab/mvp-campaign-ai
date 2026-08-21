@@ -11,7 +11,7 @@ function buildPrismaMock(overrides: Partial<Record<string, jest.Mock>> = {}) {
     membership: { count: jest.fn() },
     invitation: { count: jest.fn() },
     campaign: { count: jest.fn() },
-    aiGeneration: { aggregate: jest.fn(), count: jest.fn() },
+    aiGeneration: { aggregate: jest.fn(), count: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
     publishedPost: { count: jest.fn() },
     optimizationRecommendation: { count: jest.fn() },
     ...overrides,
@@ -205,6 +205,34 @@ describe('EntitlementsService', () => {
     });
   });
 
+  // P0.9 (chantier "Creative Intelligence Engine & Video Quality Loop", 2026-08-18) — extrait
+  // pour que CostControlService puisse estimer un coût à venir contre le solde réel.
+  describe('getRemainingCredits', () => {
+    it('quota du plan restant + solde de packs achetés', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ aiCreditsIncluded: 500, aiCreditsUsed: 300, extraCredits: 50 });
+      const service = new EntitlementsService(prisma);
+
+      await expect(service.getRemainingCredits('org-1')).resolves.toBe(250);
+    });
+
+    it('jamais négatif même si aiCreditsUsed dépasse aiCreditsIncluded (le solde de packs reste ajouté)', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ aiCreditsIncluded: 300, aiCreditsUsed: 350, extraCredits: 20 });
+      const service = new EntitlementsService(prisma);
+
+      await expect(service.getRemainingCredits('org-1')).resolves.toBe(20);
+    });
+
+    it('aucun abonnement : lève NotFoundException, même comportement que les autres assert*', async () => {
+      const prisma = buildPrismaMock();
+      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(null);
+      const service = new EntitlementsService(prisma);
+
+      await expect(service.getRemainingCredits('org-1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
   // Plafonds dédiés de l'essai gratuit — cf. plan-catalog.ts (plan 'trial') : ces tests
   // utilisent le VRAI catalogue de plans (getPlan n'est pas mocké), pour vérifier les
   // valeurs réelles annoncées commercialement (300 crédits, 10 images, 1 vidéo, 10
@@ -226,20 +254,119 @@ describe('EntitlementsService', () => {
       await expect(service.assertImageQuotaAvailable('org-1')).resolves.toBeUndefined();
     });
 
-    it('assertVideoQuotaAvailable bloque dès la 1ère vidéo (limite = 1)', async () => {
-      const prisma = buildPrismaMock();
-      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
-      (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(1);
-      const service = new EntitlementsService(prisma);
-      await expect(service.assertVideoQuotaAvailable('org-1')).rejects.toThrow(ForbiddenException);
+    // Bug corrigé le 2026-08-18 : avant la séparation en deux plafonds, le 2e/3e plan d'UNE
+    // MÊME campagne (storyboard multi-plans, cf. VideoDirectorService) échouait dès qu'un
+    // premier clip avait réussi — chaque campagne dégradait systématiquement à 1 seul plan
+    // figé. Ces tests couvrent explicitement le cas qui a motivé la correction.
+    describe('assertVideoQuotaAvailable — plafond par campagne (maxVideoShotsPerCampaign)', () => {
+      it('autorise le 2e plan de LA MÊME campagne (storyboard en cours, sous le plafond de 6)', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        // 1 clip déjà réussi pour cette campagne (le compte est filtré par campaignId).
+        (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(1);
+        const service = new EntitlementsService(prisma);
+        await expect(service.assertVideoQuotaAvailable('org-1', 'camp-1')).resolves.toBeUndefined();
+      });
+
+      it('bloque le 7e plan de la même campagne (limite = 6, pire cas 3 plans × 2 essais)', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(6);
+        const service = new EntitlementsService(prisma);
+        await expect(service.assertVideoQuotaAvailable('org-1', 'camp-1')).rejects.toThrow(ForbiddenException);
+      });
     });
 
-    it('assertVideoQuotaAvailable autorise la toute première vidéo', async () => {
-      const prisma = buildPrismaMock();
-      (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
-      (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(0);
-      const service = new EntitlementsService(prisma);
-      await expect(service.assertVideoQuotaAvailable('org-1')).resolves.toBeUndefined();
+    describe('assertVideoQuotaAvailable — plafond par organisation (maxVideos, campagnes distinctes)', () => {
+      it('autorise une toute première campagne vidéo (aucune campagne distincte avec vidéo)', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(0);
+        (prisma.aiGeneration.findMany as jest.Mock).mockResolvedValue([]);
+        const service = new EntitlementsService(prisma);
+        await expect(service.assertVideoQuotaAvailable('org-1', 'camp-1')).resolves.toBeUndefined();
+      });
+
+      it('bloque une NOUVELLE campagne vidéo quand une autre campagne a déjà consommé le quota (limite = 1)', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(0);
+        (prisma.aiGeneration.findMany as jest.Mock).mockResolvedValue([{ campaignId: 'autre-campagne' }]);
+        const service = new EntitlementsService(prisma);
+        await expect(service.assertVideoQuotaAvailable('org-1', 'camp-2')).rejects.toThrow(ForbiddenException);
+      });
+
+      it('ne bloque JAMAIS la campagne déjà en cours à cause d\'elle-même (exclue du comptage)', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(2); // sous maxVideoShotsPerCampaign (6)
+        (prisma.aiGeneration.findMany as jest.Mock).mockResolvedValue([]); // camp-1 exclue par le filtre "not: campaignId"
+        const service = new EntitlementsService(prisma);
+        await expect(service.assertVideoQuotaAvailable('org-1', 'camp-1')).resolves.toBeUndefined();
+        expect(prisma.aiGeneration.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ campaignId: { not: 'camp-1' } }) }),
+        );
+      });
+    });
+
+    describe('assertVideoQuotaAvailable — paramètre tx optionnel (Phase M)', () => {
+      it('fonctionne identiquement à l\'appel sans tx (non-régression) quand tx est omis', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(1);
+        const service = new EntitlementsService(prisma);
+        await expect(service.assertVideoQuotaAvailable('org-1', 'camp-1')).resolves.toBeUndefined();
+      });
+
+      it('utilise tx.aiGeneration au lieu de this.prisma.aiGeneration quand tx est fourni', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        const tx = { aiGeneration: { count: jest.fn().mockResolvedValue(1), findMany: jest.fn().mockResolvedValue([]) } };
+        const service = new EntitlementsService(prisma);
+
+        await expect(service.assertVideoQuotaAvailable('org-1', 'camp-1', tx as any)).resolves.toBeUndefined();
+
+        expect(tx.aiGeneration.count).toHaveBeenCalled();
+        expect(prisma.aiGeneration.count).not.toHaveBeenCalled();
+      });
+
+      it('rejette via tx exactement comme via this.prisma quand le plafond est atteint', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        const tx = { aiGeneration: { count: jest.fn().mockResolvedValue(6), findMany: jest.fn().mockResolvedValue([]) } };
+        const service = new EntitlementsService(prisma);
+
+        await expect(service.assertVideoQuotaAvailable('org-1', 'camp-1', tx as any)).rejects.toThrow(ForbiddenException);
+      });
+    });
+
+    describe('getRemainingVideoShotSlots (Phase M)', () => {
+      it('retourne le nombre de créneaux restants (plafond - déjà réussis)', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(4); // plafond trial = 6
+        const service = new EntitlementsService(prisma);
+
+        await expect(service.getRemainingVideoShotSlots('org-1', 'camp-1')).resolves.toBe(2);
+      });
+
+      it('ne descend jamais sous 0 même si le compte dépasse le plafond', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
+        (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(9);
+        const service = new EntitlementsService(prisma);
+
+        await expect(service.getRemainingVideoShotSlots('org-1', 'camp-1')).resolves.toBe(0);
+      });
+
+      it('retourne null (illimité) quand maxVideoShotsPerCampaign est null, sans requête de comptage', async () => {
+        const prisma = buildPrismaMock();
+        (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'growth' });
+        const service = new EntitlementsService(prisma);
+
+        await expect(service.getRemainingVideoShotSlots('org-1', 'camp-1')).resolves.toBeNull();
+        expect(prisma.aiGeneration.count).not.toHaveBeenCalled();
+      });
     });
 
     it('assertSocialPostQuotaAvailable bloque à partir de 10 publications réelles', async () => {
@@ -286,6 +413,7 @@ describe('EntitlementsService', () => {
       // Aucune requête de comptage n'est nécessaire quand la limite est null — vérifie
       // que le "no-op" est réel, pas juste une coïncidence de mock par défaut.
       expect(prisma.aiGeneration.count).not.toHaveBeenCalled();
+      expect(prisma.aiGeneration.findMany).not.toHaveBeenCalled();
       expect(prisma.publishedPost.count).not.toHaveBeenCalled();
       expect(prisma.optimizationRecommendation.count).not.toHaveBeenCalled();
     });
@@ -299,7 +427,9 @@ describe('EntitlementsService', () => {
     it('un essai qui atteint un plafond recommande explicitement le plan Growth', async () => {
       const prisma = buildPrismaMock();
       (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({ plan: 'trial' });
-      (prisma.aiGeneration.count as jest.Mock).mockResolvedValue(1);
+      // Pas de campaignId transmis (nouvelle campagne encore sans clip) : seul le plafond
+      // maxVideos (campagnes distinctes, via findMany) s'applique.
+      (prisma.aiGeneration.findMany as jest.Mock).mockResolvedValue([{ campaignId: 'autre-campagne' }]);
       const service = new EntitlementsService(prisma);
 
       try {

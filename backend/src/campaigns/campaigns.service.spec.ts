@@ -3,11 +3,13 @@ import { CampaignsService } from './campaigns.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EntitlementsService } from '../plans/entitlements.service';
 import { CampaignTemplatesService } from '../campaign-templates/campaign-templates.service';
+import { CreativeVariationService } from '../ai/creative-intelligence/creative-variation.service';
 
 function buildService(overrides?: { campaignFindFirst?: any; assetFindFirst?: any }) {
   const campaignCreate = jest.fn().mockResolvedValue({ id: 'campaign-1' });
   const campaignUpdate = jest.fn().mockResolvedValue({});
   const assetFindFirst = jest.fn().mockResolvedValue(overrides?.assetFindFirst);
+  const contentPieceUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
   const prisma = {
     campaign: {
       create: campaignCreate,
@@ -16,6 +18,9 @@ function buildService(overrides?: { campaignFindFirst?: any; assetFindFirst?: an
     },
     asset: {
       findFirst: assetFindFirst,
+    },
+    contentPiece: {
+      updateMany: contentPieceUpdateMany,
     },
   } as unknown as PrismaService;
 
@@ -31,9 +36,10 @@ function buildService(overrides?: { campaignFindFirst?: any; assetFindFirst?: an
   } as unknown as EntitlementsService;
 
   const templatesService = {} as unknown as CampaignTemplatesService;
+  const creativeVariation = {} as unknown as CreativeVariationService;
 
-  const service = new CampaignsService(prisma, queue, templatesService, entitlements);
-  return { service, prisma, queue, entitlements, assertChannelsAllowed, campaignCreate, campaignUpdate, assetFindFirst };
+  const service = new CampaignsService(prisma, queue, templatesService, entitlements, creativeVariation);
+  return { service, prisma, queue, entitlements, assertChannelsAllowed, campaignCreate, campaignUpdate, assetFindFirst, contentPieceUpdateMany };
 }
 
 // Vérifie la correction du gap identifié dans le README (item 55) : la restriction de
@@ -77,6 +83,22 @@ describe('CampaignsService — restriction de canaux à la création', () => {
     await service.create('org-1', { ...baseDto });
 
     expect(assertChannelsAllowed).not.toHaveBeenCalled();
+  });
+
+  it("Audit forensique Mission 4.2 (P1-7) — régénération : les ContentPiece de la tentative précédente sont marquées ARCHIVED (jamais supprimées), avant de relancer la génération", async () => {
+    const { service, contentPieceUpdateMany, campaignUpdate } = buildService();
+
+    await service.regenerate('org-1', 'campaign-1', { name: 'Campagne', productDescription: 'Produit', objective: 'Objectif' });
+
+    expect(contentPieceUpdateMany).toHaveBeenCalledWith({
+      where: { campaignId: 'campaign-1', status: { not: 'ARCHIVED' } },
+      data: { status: 'ARCHIVED' },
+    });
+    // L'archivage doit précéder la remise en IN_PROGRESS — sinon une lecture concurrente pourrait
+    // voir une campagne déjà "en cours" avec encore les anciennes pièces non archivées.
+    const archiveCallOrder = contentPieceUpdateMany.mock.invocationCallOrder[0];
+    const campaignUpdateCallOrder = campaignUpdate.mock.invocationCallOrder[0];
+    expect(archiveCallOrder).toBeLessThan(campaignUpdateCallOrder);
   });
 
   it('applique la même restriction à la régénération quand des canaux sont explicitement fournis', async () => {

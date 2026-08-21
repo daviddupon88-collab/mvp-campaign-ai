@@ -171,7 +171,18 @@ export class GoogleVeoProvider implements AiProvider {
         // réussi authentification + génération aurait quand même échoué ici avec "réponse sans
         // URI vidéo" — indépendamment de toute configuration de credentials.
         const video = data.response?.videos?.[0];
-        if (!video?.bytesBase64Encoded) throw new Error('Google Veo: réponse sans vidéo (bytesBase64Encoded absent)');
+        // Audit forensic (campagne réelle 1c41d0d0-7b13-4530-9238-244188fad73a, 2026-08-20) :
+        // avant ce correctif, la réponse réelle de Google était systématiquement jetée sans
+        // jamais être journalisée — impossible de déterminer après coup si l'absence de vidéo
+        // venait d'un aléa d'infrastructure ponctuel ou d'un filtrage de sécurité contenu côté
+        // Vertex AI (qui renvoie typiquement `done:true` sans média plutôt qu'une erreur HTTP
+        // dans ce cas). Correction obligatoire (utilisateur) : jamais le payload brut de Google
+        // (pourrait contenir des données volumineuses ou, en théorie, des champs sensibles) —
+        // un résumé diagnostique STRUCTURÉ, tronqué et sanitizé (cf. summarizeFailedVeoResponse),
+        // suffisant pour trancher la prochaine fois sans jamais risquer de stocker un blob brut.
+        if (!video?.bytesBase64Encoded) {
+          throw new Error(`Google Veo: réponse sans vidéo (bytesBase64Encoded absent) — diagnostic: ${this.summarizeFailedVeoResponse(data.response)}`);
+        }
         // Data URI, même convention que generateAudio()/generateImage() côté OpenAI quand le
         // fournisseur ne renvoie pas d'URL hébergée — cf. VideoFinalizationService.resolveVideoBuffer()
         // pour la lecture correspondante côté assemblage.
@@ -179,5 +190,49 @@ export class GoogleVeoProvider implements AiProvider {
       }
     }
     throw new Error('Google Veo: délai d\'attente dépassé pour la génération vidéo');
+  }
+
+  // Résume une réponse Veo sans vidéo de façon STRUCTURÉE, TRONQUÉE et SANITIZÉE (correction
+  // obligatoire, utilisateur, 2026-08-20) : jamais le payload brut de Google. Conçu
+  // défensivement — le format exact d'une réponse Vertex AI filtrée par la sécurité contenu
+  // (champs `raiMediaFilteredCount`/`raiMediaFilteredReasons` ou équivalents) n'a jamais été
+  // observé en conditions réelles à ce jour, donc jamais supposé avec certitude : seuls des
+  // champs scalaires (ou tableaux de scalaires) sont inclus, tout objet imbriqué inconnu est
+  // ignoré (pourrait cacher un blob base64/binaire sous un nom de champ imprévu) — seule la
+  // LISTE des clés de premier niveau est conservée pour ces cas, jamais leur contenu.
+  private static readonly DIAGNOSTIC_MAX_FIELD_LENGTH = 200;
+  private static readonly DIAGNOSTIC_MAX_ARRAY_ITEMS = 5;
+  private static readonly DIAGNOSTIC_MAX_TOTAL_LENGTH = 800;
+  private static readonly DIAGNOSTIC_KNOWN_FIELDS = ['raiMediaFilteredCount', 'raiMediaFilteredReasons', 'filteredReason', 'blockReason', 'safetyAttributes'];
+
+  private sanitizeDiagnosticValue(value: unknown): unknown {
+    if (typeof value === 'string') {
+      return value.length > GoogleVeoProvider.DIAGNOSTIC_MAX_FIELD_LENGTH
+        ? `${value.slice(0, GoogleVeoProvider.DIAGNOSTIC_MAX_FIELD_LENGTH)}…[tronqué]`
+        : value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value;
+    if (Array.isArray(value)) {
+      return value.slice(0, GoogleVeoProvider.DIAGNOSTIC_MAX_ARRAY_ITEMS).map((item) => this.sanitizeDiagnosticValue(item));
+    }
+    return undefined; // objet imbriqué/type inconnu : jamais inclus tel quel
+  }
+
+  private summarizeFailedVeoResponse(response: unknown): string {
+    if (!response || typeof response !== 'object') return 'réponse absente ou de forme inattendue';
+
+    const obj = response as Record<string, unknown>;
+    const diagnostic: Record<string, unknown> = { topLevelKeys: Object.keys(obj) };
+    for (const key of GoogleVeoProvider.DIAGNOSTIC_KNOWN_FIELDS) {
+      if (key in obj) diagnostic[key] = this.sanitizeDiagnosticValue(obj[key]);
+    }
+    // Le nombre de vidéos renvoyées (souvent 0 dans ce cas précis) est un signal utile —
+    // jamais leur contenu (bytesBase64Encoded), qui reste hors de ce résumé par construction.
+    if (Array.isArray(obj.videos)) diagnostic.videosCount = obj.videos.length;
+
+    const summary = JSON.stringify(diagnostic);
+    return summary.length > GoogleVeoProvider.DIAGNOSTIC_MAX_TOTAL_LENGTH
+      ? `${summary.slice(0, GoogleVeoProvider.DIAGNOSTIC_MAX_TOTAL_LENGTH)}…[tronqué]`
+      : summary;
   }
 }

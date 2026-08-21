@@ -49,17 +49,14 @@ function buildGateway(aiMode: 'mock' | 'live') {
 // un échec Google Veo en production basculait donc silencieusement vers une URL vidéo
 // factice, facturée en crédits et marquée SUCCEEDED, indiscernable d'une vraie vidéo.
 describe('AiGatewayService — repli mock', () => {
-  it("AI_MODE=live : échec de Google Veo ET de son repli Runway ne bascule JAMAIS sur mock, l'erreur du DERNIER fournisseur tenté remonte telle quelle", async () => {
-    const { gateway, mockProvider, googleVeoProvider, runwayProvider } = buildGateway('live');
+  it("AI_MODE=live : échec de Google Veo ne bascule JAMAIS sur mock, son erreur remonte telle quelle", async () => {
+    const { gateway, mockProvider, googleVeoProvider } = buildGateway('live');
 
     await expect(
       gateway.generateVideo({ organizationId: 'org-1', purpose: 'campaign_generation' }, { prompt: 'x' }, 'google-veo'),
-    ).rejects.toThrow('Runway error');
+    ).rejects.toThrow('Google Veo error');
 
-    // Les deux fournisseurs réels sont tentés dans l'ordre (Veo préféré, Runway en repli) —
-    // cf. AiGatewayService.fallbackChains.generateVideo — avant d'abandonner, jamais mock.
     expect(googleVeoProvider.generateVideo).toHaveBeenCalledTimes(1);
-    expect(runwayProvider.generateVideo).toHaveBeenCalledTimes(1);
     expect(mockProvider.generateVideo).not.toHaveBeenCalled();
   });
 
@@ -75,7 +72,14 @@ describe('AiGatewayService — repli mock', () => {
     );
   });
 
-  it('AI_MODE=live : Google Veo échoue mais Runway répond — la campagne obtient une vraie vidéo, pas un échec', async () => {
+  // Runway retiré du repli le 2026-08-18 (constaté en conditions réelles) : le compte Runway de
+  // cet environnement n'est pas activé (pas de crédits) — le garder dans fallbackChains ne
+  // faisait qu'ajouter une latence réelle (soumission + polling) vouée à toujours échouer avant
+  // l'échec final du plan. RunwayProvider reste câblé (cf. buildGateway ci-dessus) : ce test
+  // vérifie qu'il n'est PAS appelé tant qu'il n'est pas remis dans la chaîne — même s'il
+  // répondrait avec succès — pour détecter un retour accidentel de 'runway' dans la chaîne
+  // avant que le compte ne soit réactivé.
+  it("AI_MODE=live : Runway n'est jamais appelé (retiré du repli) même s'il répondrait avec succès", async () => {
     const { gateway, googleVeoProvider, runwayProvider } = buildGateway('live');
     (runwayProvider.generateVideo as jest.Mock).mockResolvedValue({
       content: 'https://example.com/runway-video.mp4',
@@ -84,11 +88,12 @@ describe('AiGatewayService — repli mock', () => {
       durationMs: 1,
     });
 
-    const result = await gateway.generateVideo({ organizationId: 'org-1', purpose: 'campaign_generation' }, { prompt: 'x' }, 'google-veo');
+    await expect(
+      gateway.generateVideo({ organizationId: 'org-1', purpose: 'campaign_generation' }, { prompt: 'x' }, 'google-veo'),
+    ).rejects.toThrow('Google Veo error');
 
-    expect(result.provider).toBe('runway');
     expect(googleVeoProvider.generateVideo).toHaveBeenCalledTimes(1);
-    expect(runwayProvider.generateVideo).toHaveBeenCalledTimes(1);
+    expect(runwayProvider.generateVideo).not.toHaveBeenCalled();
   });
 
   it("AI_MODE=mock : utilise directement mock, sans jamais appeler le provider réel (comportement inchangé)", async () => {
@@ -99,6 +104,64 @@ describe('AiGatewayService — repli mock', () => {
     expect(result.provider).toBe('mock');
     expect(googleVeoProvider.generateVideo).not.toHaveBeenCalled();
     expect(mockProvider.generateVideo).toHaveBeenCalledTimes(1);
+  });
+
+  // Bug corrigé le 2026-08-18 (cf. EntitlementsService.assertVideoQuotaAvailable) : le
+  // plafond vidéo distingue désormais "clips DANS cette campagne" de "campagnes distinctes
+  // avec vidéo" — il a donc besoin de savoir à QUELLE campagne rattacher chaque appel.
+  it('transmet ctx.campaignId à assertVideoQuotaAvailable, pas seulement organizationId', async () => {
+    const { gateway } = buildGateway('mock');
+    const entitlements = (gateway as any).entitlements;
+
+    await gateway.generateVideo({ organizationId: 'org-1', campaignId: 'camp-42', purpose: 'campaign_generation' }, { prompt: 'x' }, 'google-veo');
+
+    expect(entitlements.assertVideoQuotaAvailable).toHaveBeenCalledWith('org-1', 'camp-42');
+  });
+});
+
+// Bug corrigé le 2026-08-19 (constaté sur plusieurs campagnes réelles la même nuit — chaque
+// campagne finissait par échouer sur un timeout OpenAI différent, sans jamais aboutir) : un
+// timeout réseau (AbortError) sur UN SEUL appel abandonnait immédiatement tout le fournisseur,
+// faisant échouer toute la campagne (plus de fournisseur de repli après le retrait de
+// Runway/Flux/Ideogram) au lieu de retenter cet appel précis.
+describe('AiGatewayService — retry sur timeout réseau transitoire', () => {
+  it('AbortError (timeout) : retente le MÊME fournisseur et réussit à la 2e tentative, sans jamais basculer sur un autre fournisseur', async () => {
+    const { gateway, openAiProvider } = buildGateway('live');
+    const abortError = new DOMException('This operation was aborted', 'AbortError');
+    (openAiProvider.generateText as jest.Mock)
+      .mockRejectedValueOnce(abortError)
+      .mockResolvedValueOnce({ content: 'texte généré', provider: 'openai', model: 'gpt-5', durationMs: 1 });
+
+    const result = await gateway.generateText({ organizationId: 'org-1', purpose: 'campaign_generation' }, { prompt: 'x' }, 'openai');
+
+    expect(result.content).toBe('texte généré');
+    expect(openAiProvider.generateText).toHaveBeenCalledTimes(2);
+  }, 10_000);
+
+  it('AbortError persistant (3 échecs) : épuise ses tentatives sur ce fournisseur puis bascule sur le suivant de la chaîne', async () => {
+    const { gateway, openAiProvider, aiGenerationUpdate } = buildGateway('live');
+    const abortError = new DOMException('This operation was aborted', 'AbortError');
+    (openAiProvider.generateText as jest.Mock).mockRejectedValue(abortError);
+    const anthropicProvider = (gateway as any).providers.get('anthropic');
+    anthropicProvider.generateText = jest.fn().mockResolvedValue({ content: 'texte via anthropic', provider: 'anthropic', model: 'claude', durationMs: 1 });
+
+    const result = await gateway.generateText({ organizationId: 'org-1', purpose: 'campaign_generation' }, { prompt: 'x' }, 'openai');
+
+    expect(result.content).toBe('texte via anthropic');
+    expect(openAiProvider.generateText).toHaveBeenCalledTimes(3); // épuise ses 3 tentatives sur CE fournisseur
+    expect(anthropicProvider.generateText).toHaveBeenCalledTimes(1); // puis le suivant réussit du premier coup
+  }, 10_000);
+
+  it("erreur d'authentification (401, non transitoire) : bascule immédiatement sur le fournisseur suivant, sans nouvelle tentative ni délai", async () => {
+    const { gateway, openAiProvider } = buildGateway('live');
+    (openAiProvider.generateText as jest.Mock).mockRejectedValue(new Error('OpenAI error: 401 invalid_api_key'));
+    const anthropicProvider = (gateway as any).providers.get('anthropic');
+    anthropicProvider.generateText = jest.fn().mockResolvedValue({ content: 'texte via anthropic', provider: 'anthropic', model: 'claude', durationMs: 1 });
+
+    const result = await gateway.generateText({ organizationId: 'org-1', purpose: 'campaign_generation' }, { prompt: 'x' }, 'openai');
+
+    expect(result.content).toBe('texte via anthropic');
+    expect(openAiProvider.generateText).toHaveBeenCalledTimes(1); // une seule tentative — jamais retentée
   });
 });
 

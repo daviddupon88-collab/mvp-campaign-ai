@@ -1,6 +1,7 @@
-import { VideoDirectorService, DEFAULT_SHOT_PLAN, Shot } from './video-director.service';
+import { VideoDirectorService, DEFAULT_SHOT_PLAN, Shot, GenerateShotPlanParams } from './video-director.service';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { VisualDna } from './visual-dna.service';
+import { CreativeConcept } from '../creative-intelligence/creative-concept.types';
 
 function buildGatewayMock(generateTextContent: string) {
   return {
@@ -24,65 +25,125 @@ const VISUAL_DNA: VisualDna = {
   raw: '{}',
 };
 
-const SHOT: Shot = { camera: 'dolly-in', subject: 'product', motion: 'slow rotation', lighting: 'moving highlight', background: 'particles' };
+// sceneId absent volontairement ici : jamais confié au modèle, toujours réassigné par index
+// dans parseShotPlan (P0.3) — un SHOT "brut" comme celui-ci représente ce qu'un candidat JSON
+// valide contient avant cette réassignation.
+const SHOT: Shot = { sceneId: 'ignored', camera: 'dolly-in', subject: 'product', motion: 'slow rotation', lighting: 'moving highlight', background: 'particles' };
+
+function buildConcept(scenesCount: number): CreativeConcept {
+  return {
+    title: 't', concept: 'c', coreMessage: 'm', hook: 'h', emotionalDirection: 'e', visualDirection: 'v',
+    storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16',
+    scenesCount, raw: '{}',
+  };
+}
+
+function buildParams(overrides: Partial<GenerateShotPlanParams> = {}): GenerateShotPlanParams {
+  return {
+    visualDna: VISUAL_DNA,
+    productDescription: 'x',
+    objective: 'Attirer des clients B2B',
+    campaignContext: 'y',
+    creativeConcept: buildConcept(3),
+    ...overrides,
+  };
+}
 
 describe('VideoDirectorService.generateShotPlan', () => {
-  it('réponse avec exactement shotCount plans : mappés tels quels', async () => {
+  it('réponse avec exactement shotCount plans (dérivé de creativeConcept.scenesCount) : mappés tels quels, sceneId réassigné par index', async () => {
     const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
     const service = new VideoDirectorService(gateway);
 
-    const plan = await service.generateShotPlan(CTX, { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' }, 3);
+    const plan = await service.generateShotPlan(CTX, buildParams());
 
     expect(plan).toHaveLength(3);
-    expect(plan[0]).toEqual(SHOT);
+    expect(plan[0]).toEqual({ ...SHOT, sceneId: 'shot-1' });
+    expect(plan[1].sceneId).toBe('shot-2');
+    expect(plan[2].sceneId).toBe('shot-3');
   });
 
   it('réponse avec moins de plans que demandé : complétée depuis DEFAULT_SHOT_PLAN', async () => {
     const gateway = buildGatewayMock(JSON.stringify([SHOT]));
     const service = new VideoDirectorService(gateway);
 
-    const plan = await service.generateShotPlan(CTX, { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' }, 3);
+    const plan = await service.generateShotPlan(CTX, buildParams());
 
     expect(plan).toHaveLength(3);
-    expect(plan[0]).toEqual(SHOT);
-    expect(plan[1]).toEqual(DEFAULT_SHOT_PLAN[1]);
-    expect(plan[2]).toEqual(DEFAULT_SHOT_PLAN[2]);
+    expect(plan[0]).toEqual({ ...SHOT, sceneId: 'shot-1' });
+    expect(plan[1]).toEqual({ ...DEFAULT_SHOT_PLAN[1], sceneId: 'shot-2', usedFallbackTemplate: true });
+    expect(plan[2]).toEqual({ ...DEFAULT_SHOT_PLAN[2], sceneId: 'shot-3', usedFallbackTemplate: true });
   });
 
-  it('une entrée malformée au milieu du tableau : comblée individuellement, le reste conservé', async () => {
+  it('une entrée malformée au milieu du tableau : comblée individuellement, le reste conservé, et signalée via usedFallbackTemplate (audit forensique Mission 4.2, P0-2)', async () => {
     const gateway = buildGatewayMock(JSON.stringify([SHOT, { camera: 'orbit' }, SHOT]));
     const service = new VideoDirectorService(gateway);
 
-    const plan = await service.generateShotPlan(CTX, { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' }, 3);
+    const plan = await service.generateShotPlan(CTX, buildParams());
 
-    expect(plan[0]).toEqual(SHOT);
-    expect(plan[1]).toEqual(DEFAULT_SHOT_PLAN[1]);
-    expect(plan[2]).toEqual(SHOT);
+    expect(plan[0]).toEqual({ ...SHOT, sceneId: 'shot-1' });
+    expect(plan[1]).toEqual({ ...DEFAULT_SHOT_PLAN[1], sceneId: 'shot-2', usedFallbackTemplate: true });
+    expect(plan[2]).toEqual({ ...SHOT, sceneId: 'shot-3' });
   });
 
-  it('réponse non-JSON : repli intégral sur DEFAULT_SHOT_PLAN, ne lève jamais', async () => {
-    const gateway = buildGatewayMock('Désolé, je ne peux pas générer de plan.');
-    const service = new VideoDirectorService(gateway);
+  // Audit forensic (2026-08-20, campagne réelle a294054e) — le repli intégral sur
+  // DEFAULT_SHOT_PLAN a été retiré : un plan ENTIÈREMENT générique n'a aucun rapport avec le
+  // concept (contrairement au comblement PARTIEL ci-dessus, une seule entrée malformée au sein
+  // d'une réponse par ailleurs exploitable, qui reste inchangé). Échec total -> 1 nouvelle
+  // tentative (même discipline que VideoJudgeService.callTextCriteriaOnce), puis échec franc.
+  describe("Audit forensic (campagne a294054e) — échec TOTAL du Shot Plan : jamais de repli générique silencieux", () => {
+    it('réponse non-JSON aux 2 tentatives : lève une erreur explicite, jamais un plan générique substitué', async () => {
+      const gateway = buildGatewayMock('Désolé, je ne peux pas générer de plan.');
+      const service = new VideoDirectorService(gateway);
 
-    const plan = await service.generateShotPlan(CTX, { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' }, 3);
+      await expect(service.generateShotPlan(CTX, buildParams())).rejects.toThrow('SHOT_PLAN_GENERATION_FAILED');
+      expect(gateway.generateText).toHaveBeenCalledTimes(2); // 1 tentative + 1 nouvelle tentative avant d'abandonner
+    });
 
-    expect(plan).toEqual([DEFAULT_SHOT_PLAN[0], DEFAULT_SHOT_PLAN[1], DEFAULT_SHOT_PLAN[2]]);
-  });
+    it('réponse JSON valide mais pas un tableau aux 2 tentatives : lève une erreur explicite', async () => {
+      const gateway = buildGatewayMock(JSON.stringify({ not: 'an array' }));
+      const service = new VideoDirectorService(gateway);
 
-  it('réponse JSON valide mais pas un tableau : repli intégral sur DEFAULT_SHOT_PLAN', async () => {
-    const gateway = buildGatewayMock(JSON.stringify({ not: 'an array' }));
-    const service = new VideoDirectorService(gateway);
+      await expect(service.generateShotPlan(CTX, buildParams())).rejects.toThrow('SHOT_PLAN_GENERATION_FAILED');
+    });
 
-    const plan = await service.generateShotPlan(CTX, { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' }, 3);
+    it('tableau JSON valide mais VIDE aux 2 tentatives : lève une erreur explicite (pas un plan vide silencieusement accepté)', async () => {
+      const gateway = buildGatewayMock(JSON.stringify([]));
+      const service = new VideoDirectorService(gateway);
 
-    expect(plan).toEqual([DEFAULT_SHOT_PLAN[0], DEFAULT_SHOT_PLAN[1], DEFAULT_SHOT_PLAN[2]]);
+      await expect(service.generateShotPlan(CTX, buildParams())).rejects.toThrow('SHOT_PLAN_GENERATION_FAILED');
+    });
+
+    it('1er essai non-JSON, 2e essai exploitable : retourne le plan de la 2e tentative, ne lève pas', async () => {
+      const generateText = jest
+        .fn()
+        .mockResolvedValueOnce({ content: 'Désolé, je ne peux pas générer de plan.', provider: 'anthropic', model: 'claude', durationMs: 10 })
+        .mockResolvedValueOnce({ content: JSON.stringify([SHOT, SHOT, SHOT]), provider: 'anthropic', model: 'claude', durationMs: 10 });
+      const gateway = { generateText } as unknown as AiGatewayService;
+      const service = new VideoDirectorService(gateway);
+
+      const plan = await service.generateShotPlan(CTX, buildParams());
+
+      expect(plan).toHaveLength(3);
+      expect(plan[0]).toEqual({ ...SHOT, sceneId: 'shot-1' });
+      expect(generateText).toHaveBeenCalledTimes(2);
+    });
+
+    it("l'appel de génération demande explicitement un budget de tokens plus généreux que le défaut", async () => {
+      const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
+      const service = new VideoDirectorService(gateway);
+
+      await service.generateShotPlan(CTX, buildParams());
+
+      const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
+      expect(params.maxTokens).toBeGreaterThanOrEqual(8000);
+    });
   });
 
   it('utilise bien le provider "anthropic" (raisonnement structuré), pas openai', async () => {
     const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
     const service = new VideoDirectorService(gateway);
 
-    await service.generateShotPlan(CTX, { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' }, 3);
+    await service.generateShotPlan(CTX, buildParams());
 
     const [, , provider] = (gateway.generateText as jest.Mock).mock.calls[0];
     expect(provider).toBe('anthropic');
@@ -92,11 +153,7 @@ describe('VideoDirectorService.generateShotPlan', () => {
     const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
     const service = new VideoDirectorService(gateway);
 
-    await service.generateShotPlan(
-      CTX,
-      { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' },
-      3,
-    );
+    await service.generateShotPlan(CTX, buildParams());
 
     const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
     expect(params.prompt).toContain('Objectif de la campagne : Attirer des clients B2B');
@@ -110,7 +167,7 @@ describe('VideoDirectorService.generateShotPlan', () => {
     const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
     const service = new VideoDirectorService(gateway);
 
-    await service.generateShotPlan(CTX, { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' }, 3);
+    await service.generateShotPlan(CTX, buildParams());
 
     const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
     expect(params.prompt).toContain('arc narratif');
@@ -118,13 +175,41 @@ describe('VideoDirectorService.generateShotPlan', () => {
     expect(params.prompt).toContain('progression qui se répond');
   });
 
-  it('shotCount personnalisé (ex: 1) est bien respecté', async () => {
+  // Chantier Creative Intelligence Engine (2026-08-18, P0.3) : le Shot Plan doit désormais
+  // raconter le concept publicitaire retenu, pas des paramètres bruts déconnectés.
+  it('le prompt embarque le concept créatif (titre, hook, approche narrative, stratégie de preuve)', async () => {
+    const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
+    const service = new VideoDirectorService(gateway);
+    const concept = { ...buildConcept(3), title: 'Vu de loin, protégé de près', hook: 'Chantier plongé dans le noir', proofStrategy: 'Bandes réfléchissantes qui captent la lumière' };
+
+    await service.generateShotPlan(CTX, buildParams({ creativeConcept: concept }));
+
+    const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(params.prompt).toContain('Vu de loin, protégé de près');
+    expect(params.prompt).toContain('Chantier plongé dans le noir');
+    expect(params.prompt).toContain('Bandes réfléchissantes qui captent la lumière');
+  });
+
+  it('shotCount dérivé de creativeConcept.scenesCount (ex: 1) est bien respecté', async () => {
     const gateway = buildGatewayMock(JSON.stringify([SHOT]));
     const service = new VideoDirectorService(gateway);
 
-    const plan = await service.generateShotPlan(CTX, { visualDna: VISUAL_DNA, productDescription: 'x', objective: 'Attirer des clients B2B', campaignContext: 'y' }, 1);
+    const plan = await service.generateShotPlan(CTX, buildParams({ creativeConcept: buildConcept(1) }));
 
     expect(plan).toHaveLength(1);
+  });
+
+  // P0.4 (shot-diversity.ts) : ce champ n'est JAMAIS présent en temps normal — seulement lors
+  // d'une régénération déclenchée après détection de répétition. Vérifie juste qu'il est bien
+  // transmis au prompt quand fourni, sans dépendre de shot-diversity.ts lui-même (testé à part).
+  it('avoidRepetitionHint, quand fourni, est injecté dans le prompt', async () => {
+    const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
+    const service = new VideoDirectorService(gateway);
+
+    await service.generateShotPlan(CTX, buildParams({ avoidRepetitionHint: 'évite 3 plans en close-up statique' }));
+
+    const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(params.prompt).toContain('évite 3 plans en close-up statique');
   });
 });
 
@@ -133,6 +218,7 @@ describe('VideoDirectorService.serializeShotToPrompt', () => {
 
   it('reproduit la structure littérale du gabarit cinématographique (7 lignes)', () => {
     const prompt = service.serializeShotToPrompt({
+      sceneId: 'shot-1',
       camera: 'slow cinematic push-in',
       subject: 'product',
       motion: 'the product rotates slowly',
@@ -154,6 +240,7 @@ Avoid a static camera and avoid a still-image effect.`,
 
   it('subject différent de "product" est intégré dans la ligne Camera', () => {
     const prompt = service.serializeShotToPrompt({
+      sceneId: 'shot-1',
       camera: 'close-up',
       subject: 'logo',
       motion: 'slight push-in',
@@ -189,6 +276,45 @@ Avoid a static camera and avoid a still-image effect.`,
     const prompt = service.serializeShotToPrompt(SHOT);
     expect(prompt.startsWith('Create a dynamic premium product commercial.')).toBe(true);
     expect(prompt).not.toContain('beat of the commercial');
+  });
+
+  describe('Audit forensique Mission 4.2 (P0-6) — action/cameraMovement/productBenefit atteignent enfin le prompt vidéo', () => {
+    it('les 3 champs renseignés : 3 lignes additives après Lighting, gabarit des 7 lignes inchangé', () => {
+      const prompt = service.serializeShotToPrompt({
+        ...SHOT,
+        action: 'the hand reaches for the bottle and lifts it',
+        cameraMovement: 'slow dolly-in with a slight tilt up',
+        productBenefit: 'shows the leak-proof cap under pressure',
+      });
+
+      expect(prompt).toBe(
+        `Create a dynamic premium product commercial.
+The product remains visually identical to the reference image.
+Camera: dolly-in
+Motion: slow rotation
+Environment: particles
+Lighting: moving highlight
+Action: the hand reaches for the bottle and lifts it
+Camera movement: slow dolly-in with a slight tilt up
+What this shot must convey: shows the leak-proof cap under pressure
+The movement must remain continuous throughout the entire shot.
+Avoid a static camera and avoid a still-image effect.`,
+      );
+    });
+
+    it('aucun des 3 champs renseigné : aucune ligne ajoutée, gabarit strictement identique (non-régression)', () => {
+      const prompt = service.serializeShotToPrompt(SHOT);
+      expect(prompt).not.toContain('Action:');
+      expect(prompt).not.toContain('Camera movement:');
+      expect(prompt).not.toContain('What this shot must convey:');
+    });
+
+    it('un seul des 3 champs renseigné (action) : une seule ligne ajoutée', () => {
+      const prompt = service.serializeShotToPrompt({ ...SHOT, action: 'the cap lights up' });
+      expect(prompt).toContain('Action: the cap lights up');
+      expect(prompt).not.toContain('Camera movement:');
+      expect(prompt).not.toContain('What this shot must convey:');
+    });
   });
 });
 
@@ -236,6 +362,34 @@ describe('VideoDirectorService.repairShotPrompt', () => {
 
     expect(prompt).toContain('too static');
     expect(prompt).toContain('did not accurately match');
+  });
+
+  // P0.6 (repair-dispatch.ts, chantier Creative Intelligence Engine) : branche transition,
+  // déclenchée par le Video Judge sur la vidéo finale assemblée, pas par VideoAnalyzerService.
+  it('additionalDefect de type transition : ajoute une instruction de raccord, cumulable avec mouvement/fidélité', () => {
+    const prompt = service.repairShotPrompt(
+      SHOT,
+      { passed: true, qualityScore: 90, motionQuality: { ...PASSING, freezeRatio: 0 }, visualFidelity: { ...PASSING }, reasons: [] },
+      { type: 'transition', description: 'le plan suivant démarre sur un angle opposé' },
+    );
+
+    expect(prompt).toContain('transitions smoothly into the next shot');
+    expect(prompt).toContain('le plan suivant démarre sur un angle opposé');
+  });
+
+  // Phase B (chantier V2, 2026-08-19) : escalation présente uniquement quand l'historique
+  // anti-boucle montre qu'une correction précédente sur ce défaut a eu un résultat FAIBLE.
+  it('escalation renseignée : ajoute un correctif renforcé distinct, cumulable avec mouvement/fidélité', () => {
+    const prompt = service.repairShotPrompt(
+      SHOT,
+      { passed: false, qualityScore: 40, motionQuality: { passed: false, score: 20, reasons: ['quasi-statique'], freezeRatio: 0.5 }, visualFidelity: { ...PASSING }, reasons: ['quasi-statique'] },
+      undefined,
+      { priorFailureReason: 'toujours trop statique' },
+    );
+
+    expect(prompt).toContain('CRITICAL');
+    expect(prompt).toContain('toujours trop statique');
+    expect(prompt).toContain('too static'); // le correctif mouvement normal reste présent, cumulé
   });
 
   it('aucun appel IA : pure construction de texte (aucune dépendance à un AiGatewayService fonctionnel)', () => {

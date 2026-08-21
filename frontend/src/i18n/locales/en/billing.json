@@ -55,6 +55,7 @@
       "channels": "your simultaneous channels",
       "images": "your AI images",
       "videos": "your AI videos",
+      "videoShots": "your video plan shots",
       "socialPosts": "your publications",
       "optimizerRuns": "your Optimizer analyses"
     }

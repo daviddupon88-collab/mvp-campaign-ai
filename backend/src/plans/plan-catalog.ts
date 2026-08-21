@@ -20,7 +20,21 @@ export interface PlanDefinition {
   // combien de texte a déjà été généré. null = pas de plafond dédié (le pool de crédits
   // reste la seule limite, cas de tous les plans payants).
   maxImages: number | null;
+  // Nombre de CAMPAGNES DISTINCTES (pas de clips individuels) pouvant recevoir un traitement
+  // vidéo sur la durée de vie du plan — cf. EntitlementsService.assertVideoQuotaAvailable().
+  // Distinct de maxVideoShotsPerCampaign : celui-ci borne le nombre de campagnes qui ont droit
+  // à une vidéo, l'autre borne le nombre de plans/clips DANS cette vidéo une fois autorisée.
   maxVideos: number | null;
+  // Nombre de clips vidéo (plans du storyboard, cf. VideoDirectorService) autorisés PAR
+  // campagne déjà autorisée à avoir une vidéo (cf. maxVideos ci-dessus). Corrige un bug réel
+  // constaté le 2026-08-18 : avant l'ajout de ce champ, le plafond dédié `maxVideos` comptait
+  // CHAQUE clip généré (donc CHAQUE plan du storyboard) comme "une vidéo" — la toute première
+  // génération de plan consommait déjà tout le quota de l'essai, et
+  // AiOrchestratorService.generateShotPlanVideoOrDegrade() dégradait alors systématiquement à
+  // 1 seul plan sur les 3 prévus (image figée le reste de la narration, jamais le storyboard
+  // dynamique multi-plans que l'architecture sait pourtant produire). null = pas de plafond
+  // dédié (le pool de crédits `aiCreditsIncluded` reste la seule limite réelle).
+  maxVideoShotsPerCampaign: number | null;
   maxSocialPosts: number | null;
   maxOptimizerRuns: number | null; // null = illimité (cron nocturne normal)
 
@@ -51,19 +65,31 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     key: 'trial',
     name: 'Essai gratuit',
     priceMonthly: 0,
-    // 300 — INCHANGÉ par la passe du 2026-08-13 (cible "marge nette 40%/plan, prix inchangés").
-    // Un essai à 0€ n'a mathématiquement pas de marge à calculer (40% de 0€ = 0€) : c'est une
-    // dépense d'acquisition assumée, pas un centre de profit. 300 reste dimensionné pour sa
-    // vraie fonction — permettre UNE campagne complète avec vidéo (la démonstration "wow" de
-    // la page d'accueil) ; `maxVideos: 1` reste le vrai plafond qui borne le coût vidéo de
-    // l'essai, pas ce nombre de crédits — au-delà, generateCampaign() dégrade proprement sans
-    // vidéo plutôt que d'échouer (cf. AiOrchestratorService.generateVideoOrDegrade).
-    aiCreditsIncluded: 300,
+    // TEMPORAIRE (2026-08-18, demande explicite) : 1100 → 50000 pour DÉBLOQUER LA CAMPAGNE DE
+    // TESTS EN COURS du chantier "Creative Intelligence Engine & Video Quality Loop" — le
+    // plafond de crédits ne doit plus jamais être ce qui interrompt un test. REMETTRE À 1100
+    // avant tout lancement réel : à ce niveau, l'essai gratuit devient plus généreux que
+    // Starter (920), Growth (2585) ET Business (6835) — un vrai client payant aurait moins de
+    // crédits qu'un essai à 0€, ce qui détruit l'incitation à upgrader (cf.
+    // getRecommendedUpgrade). 1100 restait le chiffre calibré sur deux tests réels (300→650
+    // théorique, 650→1100 après un run réel à 725 crédits) — cf. historique game complet dans
+    // l'historique git de cette ligne si besoin de le retrouver.
+    aiCreditsIncluded: 50000,
     maxSeats: 2,
     maxActiveCampaigns: 3,
     maxChannels: 3,
     maxImages: 10,
+    // 1 CAMPAGNE (pas 1 clip, cf. commentaire sur PlanDefinition.maxVideos) — préserve
+    // l'intention commerciale d'origine ("permettre UNE campagne complète avec vidéo, la
+    // démonstration wow de la page d'accueil") sans plus jamais tronquer son storyboard.
     maxVideos: 1,
+    // 6 = shotCount par défaut (3, cf. VideoDirectorService.generateShotPlan) × 2 essais max
+    // par plan (génération initiale + 1 régénération du Repair Loop, cf.
+    // AiOrchestratorService.generateShotPlanVideoOrDegrade) — plafond au pire cas réel, ne
+    // bloque donc jamais une génération légitime même si plusieurs plans nécessitent une
+    // régénération. Le pool de crédits (aiCreditsIncluded ci-dessus) reste la limite pratique
+    // dans l'immense majorité des cas.
+    maxVideoShotsPerCampaign: 6,
     maxSocialPosts: 10,
     maxOptimizerRuns: 1,
     allowedChannels: ['META_FACEBOOK', 'META_INSTAGRAM', 'LINKEDIN'],
@@ -92,6 +118,7 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     maxChannels: 3,
     maxImages: null,
     maxVideos: null,
+    maxVideoShotsPerCampaign: null,
     maxSocialPosts: null,
     maxOptimizerRuns: null,
     allowedChannels: null,
@@ -112,6 +139,7 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     maxChannels: null,
     maxImages: null,
     maxVideos: null,
+    maxVideoShotsPerCampaign: null,
     maxSocialPosts: null,
     maxOptimizerRuns: null,
     allowedChannels: null,
@@ -136,6 +164,7 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     maxChannels: null,
     maxImages: null,
     maxVideos: null,
+    maxVideoShotsPerCampaign: null,
     maxSocialPosts: null,
     maxOptimizerRuns: null,
     allowedChannels: null,
@@ -161,6 +190,7 @@ export const PLAN_CATALOG: Record<string, PlanDefinition> = {
     maxChannels: null,
     maxImages: null,
     maxVideos: null,
+    maxVideoShotsPerCampaign: null,
     maxSocialPosts: null,
     maxOptimizerRuns: null,
     allowedChannels: null,
@@ -219,13 +249,15 @@ export function getRecommendedUpgrade(currentPlanKey: string): string | null {
 // différenciées côté crédits, seul le type d'appel — texte/image/vidéo — et son origine
 // le sont). Source de vérité unique utilisée par AiGatewayService.creditCostFor().
 //
-// Note : les plafonds dédiés (PlanDefinition.maxVideos etc.) restent le VRAI garde-fou de
-// coût sur la vidéo/image/publication pendant l'essai, indépendamment du pool de crédits
-// partagé — cf. EntitlementsService.assertVideoQuotaAvailable(). Depuis que la vidéo est
-// systématique (une par campagne, cf. README item 63), une 2e ou 3e vidéo d'essai atteint
-// ce plafond dédié (maxVideos: 1) avant même de toucher au pool de crédits ; ce cas précis
-// dégrade proprement (campagne terminée sans vidéo) plutôt que d'échouer, cf.
-// AiOrchestratorService.generateVideoOrDegrade().
+// Note : les plafonds dédiés (PlanDefinition.maxVideos / maxVideoShotsPerCampaign etc.)
+// restent un garde-fou de coût secondaire sur la vidéo/image/publication pendant l'essai,
+// indépendant du pool de crédits partagé — cf. EntitlementsService.assertVideoQuotaAvailable().
+// Depuis la correction du 2026-08-18, maxVideos (1) borne le nombre de CAMPAGNES distinctes
+// avec vidéo et maxVideoShotsPerCampaign (6) borne les clips DANS cette campagne — dans la
+// pratique, c'est aiCreditsIncluded (650, dimensionné pour un storyboard complet) qui est
+// atteint en premier bien avant ces plafonds dédiés. Si l'un ou l'autre est atteint le
+// premier, ce cas dégrade proprement (campagne terminée sans vidéo, ou avec moins de plans
+// que prévu) plutôt que d'échouer, cf. AiOrchestratorService.generateShotPlanVideoOrDegrade().
 // ---------------------------------------------------------------------------
 export const CREDIT_COSTS: Record<string, Record<string, number>> = {
   // Génération de contenu de campagne (Copywriting AI, Creative Studio, Video Studio).

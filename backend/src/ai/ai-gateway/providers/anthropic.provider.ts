@@ -43,12 +43,16 @@ export class AnthropicProvider implements AiProvider {
           messages: [{ role: 'user', content: params.prompt }],
         }),
       },
-      // 60s, pas le défaut 20s : même raisonnement que OpenAiProvider — un budget de sortie plus
-      // large avec thinking actif prend plus de temps que les 1000 tokens précédents. Jamais
-      // confirmé en conditions réelles (l'appel Anthropic a échoué avant sur une clé API absente
-      // dans ce test), mais le risque est symétrique à celui constaté côté OpenAI le 2026-08-16 —
-      // corrigé préventivement plutôt que d'attendre une deuxième découverte du même problème.
-      60_000,
+      // 120s, pas 60s : marge de sécurité pour un appel generateText à fort contexte (ex. Shot
+      // Plan/Judge sur une vraie photo produit, avec analyse visuelle détaillée injectée dans le
+      // prompt). NOTE — diagnostic corrigé le 2026-08-19 : une série d'AbortError observée ce
+      // jour-là a d'abord été attribuée à ce timeout, mais l'investigation complète (logs
+      // "Échec du fournisseur") a montré que la cause réelle était le solde de crédits Anthropic
+      // épuisé sur la clé API de cet environnement (erreur 400 immédiate, pas un timeout) — les
+      // AbortError observées venaient du repli OpenAI (60s), pas d'Anthropic. Ce timeout à 120s
+      // reste néanmoins justifié en soi (même raisonnement que OpenAiProvider.analyzeImage), mais
+      // n'était pas le correctif du problème constaté ce jour-là.
+      120_000,
     );
 
     if (!response.ok) {
