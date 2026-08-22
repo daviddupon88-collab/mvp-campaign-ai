@@ -31,19 +31,25 @@ export class MetaCapiService {
   ) {}
 
   async pushConversion(organizationId: string, campaignId: string, params: PushConversionParams): Promise<void> {
-    const config = await this.prisma.metaCapiConfig.findUnique({ where: { organizationId } });
-    if (!config || !config.enabled) {
-      this.logger.debug(`Meta CAPI non configuré/désactivé pour l'organisation ${organizationId} — push ignoré`);
-      return;
-    }
-
-    const click = await this.clickTracking.findMostRecentClickWithFbclid(campaignId);
-    if (!click || !click.fbclid) {
-      this.logger.debug(`Aucun clic Meta récent avec fbclid pour la campagne ${campaignId} — push ignoré (pas d'attribution possible)`);
-      return;
-    }
-
+    // Audit forensic (2026-08-22) — TOUT le corps de la méthode doit être sous try/catch : les
+    // deux lookups ci-dessous (config, dernier clic) étaient auparavant hors du try, donc un
+    // simple incident DB transitoire faisait rejeter cette promesse ; comme l'appelant
+    // (AnalyticsIngestionService.recordManualConversion) l'invoque en fire-and-forget (`void`,
+    // sans .catch), ce rejet devenait un unhandled promise rejection — capable de faire planter
+    // TOUT le process Node (même bug que narrationPromise dans ai-orchestrator.service.ts).
     try {
+      const config = await this.prisma.metaCapiConfig.findUnique({ where: { organizationId } });
+      if (!config || !config.enabled) {
+        this.logger.debug(`Meta CAPI non configuré/désactivé pour l'organisation ${organizationId} — push ignoré`);
+        return;
+      }
+
+      const click = await this.clickTracking.findMostRecentClickWithFbclid(campaignId);
+      if (!click || !click.fbclid) {
+        this.logger.debug(`Aucun clic Meta récent avec fbclid pour la campagne ${campaignId} — push ignoré (pas d'attribution possible)`);
+        return;
+      }
+
       const accessToken = this.tokenCrypto.decrypt(config.accessToken);
       const fbc = `fb.1.${click.createdAt.getTime()}.${click.fbclid}`;
 

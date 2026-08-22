@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EntitlementsService } from '../../plans/entitlements.service';
 import { creditCostFor } from '../../plans/plan-catalog';
+import { recordActivity, serializeError } from '../../common/observability/process-health';
 import { MockProvider } from './providers/mock.provider';
 import { OpenAiProvider } from './providers/openai.provider';
 import { AnthropicProvider } from './providers/anthropic.provider';
@@ -264,6 +265,7 @@ export class AiGatewayService {
       data: { status: 'FAILED', errorMessage: String(lastError) },
     });
     this.logger.error(`Tous les fournisseurs ont échoué pour "${taskType}" (${ctx.purpose}). Dernière erreur: ${lastError}`);
+    recordActivity('ai_call_failed', { taskType, purpose: ctx.purpose, campaignId: ctx.campaignId, organizationId: ctx.organizationId, error: serializeError(lastError) });
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 

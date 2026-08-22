@@ -12,6 +12,9 @@ import { ShotPlan } from '../video-direction/video-director.service';
 import { VideoDirectorService } from '../video-direction/video-director.service';
 import { ShotQualityResult } from '../video-direction/video-analyzer.service';
 import { CreativeConcept } from '../creative-intelligence/creative-concept.types';
+import { NarrativeBlueprint } from '../creative-intelligence/narrative-blueprint.types';
+import { buildNarrationFromBlueprint } from '../creative-intelligence/narrative-blueprint-narration';
+import { isLegacyNarrationExperimentMode } from '../creative-intelligence/narration-experiment-flag';
 import { VideoFinalizationService, FinalizeResult } from '../../video-assembly/video-finalization.service';
 import { VideoJudgeService } from './video-judge.service';
 import { VideoJudgeResult, JudgeCriterionResult, JudgeCriterionName, UNAVAILABLE_DEFECT } from './video-judge.types';
@@ -36,6 +39,9 @@ export interface QualityLoopParams {
   visualDna: VisualDna;
   referenceImageUrl: string;
   concept: CreativeConcept;
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 4) — requis par ShotExecutionCompiler
+  // (via VideoDirectorService.repairShotPrompt) au même titre que `concept`.
+  narrativeBlueprint: NarrativeBlueprint;
   productProfile: ProductIntelligenceProfile | null;
 }
 
@@ -151,6 +157,7 @@ export class VideoQualityLoopService {
         perShotQuality: params.perShotQuality,
         visualDna: params.visualDna,
         concept: params.concept,
+        narrativeBlueprint: params.narrativeBlueprint,
         transcript: state.transcript,
         productProfile: params.productProfile,
       });
@@ -322,7 +329,25 @@ export class VideoQualityLoopService {
       }
 
       if (strategy === 'AUDIO_REGEN') {
-        const audio = await this.aiGateway.generateAudio(ctx, { prompt: io.getNarrationText() }, 'openai');
+        // Correction ciblée (Mission 4.5, Contrôle A1, campagne réelle 2026-08-22) — auparavant,
+        // AUDIO_REGEN régénérait l'audio à partir de io.getNarrationText() (= params.narrationText,
+        // une chaîne FIGÉE calculée une seule fois au début du pipeline) : si CE texte source était
+        // déjà défectueux (cta tronqué, cf. bug corrigé dans buildNarrationFromBlueprint), chaque
+        // tentative de réparation ne faisait que ré-enregistrer une nouvelle prise du MÊME script
+        // cassé — observé en conditions réelles : ctaClarity a RÉGRESSÉ (50 -> 42) après ce
+        // "correctif". Reconstruit maintenant la narration À NEUF depuis le NarrativeBlueprint
+        // (source canonique, jamais le storyboard/concept/shots — défaut exclusivement narratif)
+        // via la même fonction déterministe que la 1ère génération, désormais corrigée pour ne
+        // jamais tronquer le hook ni le cta.
+        // Mission 4.5 (Phases A2-A5, contrôles expérimentaux) — un contrôle Ax doit rejouer le
+        // comportement pré-correctif DES DEUX bouts de la correction, pas seulement du
+        // constructeur de narration : réutilise ici le texte figé d'origine (comportement
+        // historique), jamais actif hors de cette expérimentation.
+        const reconstructedNarration = isLegacyNarrationExperimentMode()
+          ? io.getNarrationText()
+          : buildNarrationFromBlueprint(params.narrativeBlueprint, params.concept?.concept ?? '');
+        if (!isLegacyNarrationExperimentMode()) this.verifyNarrationCoverage(reconstructedNarration, params);
+        const audio = await this.aiGateway.generateAudio(ctx, { prompt: reconstructedNarration }, 'openai');
         io.setNarrationDataUri(audio.content);
         const newTranscript = await this.retranscribe(ctx, audio.content);
         if (newTranscript) io.setTranscript(newTranscript);
@@ -352,7 +377,13 @@ export class VideoQualityLoopService {
           if (!shot || !quality) continue;
 
           const escalation = needsEscalation(history, defect.name, sceneId, strategy) ? { priorFailureReason: defect.defect! } : undefined;
-          const prompt = this.videoDirector.repairShotPrompt(shot, quality, undefined, escalation);
+          const prompt = this.videoDirector.repairShotPrompt(
+            shot,
+            quality,
+            { creativeConcept: params.concept, narrativeBlueprint: params.narrativeBlueprint },
+            undefined,
+            escalation,
+          );
           try {
             const clip = await this.aiGateway.generateVideo(ctx, { prompt, imageUrl: params.referenceImageUrl, durationSeconds: 6 }, 'google-veo');
             const clips = io.getVideoClips().map((c) => (c.sceneId === sceneId ? { sceneId, content: clip.content } : c));
@@ -372,6 +403,23 @@ export class VideoQualityLoopService {
   private async recomposeVideo(clips: VideoClip[]): Promise<string> {
     if (clips.length === 1) return clips[0].content;
     return this.videoFinalization.concatenateClips(clips.map((c) => c.content));
+  }
+
+  // Correction ciblée (Mission 4.5) — vérification déterministe, non bloquante (observabilité
+  // seule, jamais un rejet) : confirme que la narration reconstruite couvre bien le cta et le nom
+  // de marque attendus, cf. brief §"Correction candidate" étapes 4-5. N'insère JAMAIS de texte de
+  // force dans une narration déjà produite par le NarrativeBlueprint (risquerait de casser sa
+  // cohérence) — une absence détectée ici signale un problème EN AMONT (blueprint lui-même
+  // incomplet), pas quelque chose que ce correctif ciblé doit réparer.
+  private verifyNarrationCoverage(narration: string, params: QualityLoopParams): void {
+    const normalized = narration.toLowerCase();
+    if (params.narrativeBlueprint.cta?.trim() && !normalized.includes(params.narrativeBlueprint.cta.trim().toLowerCase().slice(0, 20))) {
+      this.logger.warn(`AUDIO_REGEN : la narration reconstruite ne semble pas contenir le début du cta attendu du NarrativeBlueprint — vérifier le blueprint lui-même.`);
+    }
+    const brand = params.productProfile?.brand?.trim();
+    if (brand && !normalized.includes(brand.toLowerCase())) {
+      this.logger.warn(`AUDIO_REGEN : la narration reconstruite ne mentionne pas explicitement la marque "${brand}" — reconnaissance auditive possiblement affaiblie.`);
+    }
   }
 
   private worstSceneId(perShotQuality: Map<string, ShotQualityResult>): string | undefined {

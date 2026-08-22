@@ -17,5 +17,9 @@ export interface CreativeConcept {
   format: '9:16';
   // Pilote directement le nombre de plans du Shot Plan (P0.3) — cadré [2,5] au parsing.
   scenesCount: number;
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 2) — preuve VÉRIFIABLE que ce concept a
+  // été construit pour satisfaire le QualityTarget, jamais une note auto-attribuée (brief : "Ne
+  // pas demander à l'IA de simplement attribuer une note élevée à son propre concept").
+  qualityAlignment: string;
   raw: string;
 }

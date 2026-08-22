@@ -80,13 +80,14 @@ jest.mock('fluent-ffmpeg', () => {
   return fn;
 });
 
-import { VideoJudgeService } from './video-judge.service';
+import { VideoJudgeService, buildVoiceAudibilityCriterion } from './video-judge.service';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PromptEngineService } from '../prompt-engine/prompt-engine.service';
 import { ShotQualityResult } from '../video-direction/video-analyzer.service';
 import { VisualDna } from '../video-direction/visual-dna.service';
 import { CreativeConcept } from '../creative-intelligence/creative-concept.types';
 import { Shot } from '../video-direction/video-director.service';
+import { NarrativeBlueprint } from '../creative-intelligence/narrative-blueprint.types';
 
 const CTX = { organizationId: 'org-1', campaignId: 'camp-1', purpose: 'campaign_generation' as const };
 const promptEngine = new PromptEngineService();
@@ -94,7 +95,13 @@ const promptEngine = new PromptEngineService();
 const VISUAL_DNA: VisualDna = { productCategory: 'chaussures', colors: ['bleu'], materials: ['mesh'], shape: 'basse', distinctiveFeatures: [], logoOrBrandMarks: null, raw: '{}' };
 const CONCEPT: CreativeConcept = {
   title: 't', concept: 'c', coreMessage: 'm', hook: 'h', emotionalDirection: 'e', visualDirection: 'v',
-  storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16', scenesCount: 2, raw: '{}',
+  storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16', scenesCount: 2, qualityAlignment: '', raw: '{}',
+};
+const BLUEPRINT: NarrativeBlueprint = {
+  hook: 'h', problem: 'p', tension: 't', reveal: 'r', productIntroduction: 'i', benefit: 'b', proof: 'pr',
+  emotionalPayoff: 'e', cta: 'c', pacing: 'x', pausePoints: [],
+  beats: [{ id: 'beat-1', role: 'hook', objective: 'accrocher', duration: 3, requiredVisualEvidence: 'x', requiredVoiceover: 'x', shotIds: [] }],
+  raw: '{}',
 };
 const SHOT_1: Shot = { sceneId: 'shot-1', camera: 'x', subject: 'product', motion: 'x', lighting: 'x', background: 'x', onScreenText: 'Visible dans le noir' };
 const SHOT_2: Shot = { sceneId: 'shot-2', camera: 'x', subject: 'product', motion: 'x', lighting: 'x', background: 'x' };
@@ -166,6 +173,7 @@ function buildParams(overrides: Partial<Parameters<VideoJudgeService['judge']>[1
     ]),
     visualDna: VISUAL_DNA,
     concept: CONCEPT,
+    narrativeBlueprint: BLUEPRINT,
     // Mission 4 Phase D : 3,0 mots/s sur 3s, aucune pause — dans la cible VOICE_PACING_OK
     // ([2.5, 3.5]) pour ne pas introduire de défaut voicePacing non demandé dans les tests
     // qui ne testent pas spécifiquement ce critère (cf. describe dédié plus bas).
@@ -384,6 +392,29 @@ describe('VideoJudgeService.judge', () => {
     expect(result.criteria.find((c) => c.name === 'voiceAudibility')?.score).toBe(50);
   });
 
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 6, Étape 11) — panne de mesure (ffprobe/
+  // ffmpeg indisponible sur la narration) distincte d'une narration RÉELLEMENT silencieuse.
+  describe('buildVoiceAudibilityCriterion', () => {
+    it('mesure indisponible (narrationLufs=null) : score neutre + UNAVAILABLE_DEFECT, jamais confondu avec une narration inaudible', () => {
+      const result = buildVoiceAudibilityCriterion(null);
+      expect(result.score).toBe(50);
+      expect(result.defect).toBe('Vérification indisponible');
+      expect(result.justification).not.toContain('inaudible');
+    });
+
+    it('narration mesurée mais silencieuse (<=-60 LUFS) : score bas + défaut réel', () => {
+      const result = buildVoiceAudibilityCriterion(-60);
+      expect(result.score).toBe(20);
+      expect(result.defect).toBe('Narration inaudible');
+    });
+
+    it('narration mesurée avec un signal présent (>-60 LUFS) : score haut, aucun défaut', () => {
+      const result = buildVoiceAudibilityCriterion(-16);
+      expect(result.score).toBe(90);
+      expect(result.defect).toBeUndefined();
+    });
+  });
+
   it('mixage final loin de la cible -16 LUFS : audioQuality bas', async () => {
     mockLoudnormStats.value = '{"input_i":"-30.0"}';
     const gateway = buildGatewayMock();
@@ -420,7 +451,34 @@ describe('VideoJudgeService.judge', () => {
     await service.judge(CTX, buildParams());
 
     const [, , , promptVersion] = (gateway.generateText as jest.Mock).mock.calls[0];
-    expect(promptVersion).toBe('video-judge-v2');
+    expect(promptVersion).toBe('video-judge-v3');
+  });
+
+  // Bug réel constaté en conditions réelles (2026-08-21, même classe que StoryboardGateService/
+  // CreativeGateService/NarrativeBlueprintService/CreativeConceptService/CreativeIntelligenceService/
+  // CreativeVariationService) : sans maxTokens explicite, ce call retombe sur le défaut 4000 de
+  // AnthropicProvider — un array de plusieurs critères texte, chacun avec score+justification+
+  // defect, risque réel de troncature JSON en sortie.
+  it('demande un budget de tokens généreux (8000), pas le défaut 4000 — évite la troncature JSON (appel texte groupé)', async () => {
+    const gateway = buildGatewayMock();
+    const service = new VideoJudgeService(gateway, promptEngine);
+
+    await service.judge(CTX, buildParams());
+
+    const [, requestParams] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(requestParams.maxTokens).toBe(8000);
+  });
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 6c, Étape 10) — le Judge doit désormais
+  // voir la structure narrative RÉELLEMENT planifiée (beats), pas seulement le concept résumé.
+  it('les beats du NarrativeBlueprint atteignent le prompt texte groupé (comparaison attendu-vs-réel)', async () => {
+    const gateway = buildGatewayMock();
+    const service = new VideoJudgeService(gateway, promptEngine);
+
+    await service.judge(CTX, buildParams({ narrativeBlueprint: { ...BLUEPRINT, beats: [{ ...BLUEPRINT.beats[0], requiredVoiceover: 'MARQUEUR_BEAT_UNIQUE' }] } }));
+
+    const [, { prompt }] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(prompt).toContain('MARQUEUR_BEAT_UNIQUE');
   });
 
   it('exactement 3 appels IA au total (2 vision + 1 texte), quel que soit le nombre de critères', async () => {

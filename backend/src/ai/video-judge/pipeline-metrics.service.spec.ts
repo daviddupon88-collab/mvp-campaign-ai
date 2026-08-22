@@ -98,3 +98,121 @@ describe('PipelineMetricsService.getPipelineMetrics', () => {
     expect(traceCall.where.createdAt).toBeUndefined();
   });
 });
+
+// Mission 4.5 (Phase 1 — instrumentation Product Grounding)
+describe('PipelineMetricsService.getProductGroundingMetrics', () => {
+  function buildPrisma(opts: {
+    traces?: Array<{ campaignId: string | null; productUrlFacts: unknown; productConflicts: unknown }>;
+    aiGenerationAgg?: { costEstimate: number | null; tokensUsed: number | null; durationMs: number | null; count: number };
+  } = {}) {
+    const traces = opts.traces ?? [];
+    const agg = opts.aiGenerationAgg ?? { costEstimate: 0, tokensUsed: 0, durationMs: null, count: 0 };
+    const findMany = jest.fn().mockResolvedValue(traces);
+    const aggregate = jest.fn().mockResolvedValue({
+      _sum: { costEstimate: agg.costEstimate, tokensUsed: agg.tokensUsed },
+      _avg: { durationMs: agg.durationMs },
+      _count: agg.count,
+    });
+    return {
+      prisma: {
+        creativeGenerationTrace: { findMany },
+        aiGeneration: { aggregate },
+      } as unknown as PrismaService,
+      findMany,
+      aggregate,
+    };
+  }
+
+  it('aucune campagne avec URL : toutes les valeurs à 0/null, aucune division par zéro', async () => {
+    const { prisma } = buildPrisma();
+    const service = new PipelineMetricsService(prisma);
+
+    const metrics = await service.getProductGroundingMetrics('org-1');
+
+    expect(metrics.totalCampaignsWithUrl).toBe(0);
+    expect(metrics.averageFetchDurationMs).toBeNull();
+    expect(metrics.llmFallback.totalGenerations).toBe(0);
+  });
+
+  it('distingue extraction déterministe réussie vs repli LLM déclenché (MIXED compte comme repli)', async () => {
+    const { prisma } = buildPrisma({
+      traces: [
+        { campaignId: 'c1', productUrlFacts: { extractionMethod: 'JSON_LD' }, productConflicts: [] },
+        { campaignId: 'c2', productUrlFacts: { extractionMethod: 'MIXED' }, productConflicts: [] },
+        { campaignId: 'c3', productUrlFacts: { extractionMethod: 'LLM' }, productConflicts: [] },
+      ],
+    });
+    const service = new PipelineMetricsService(prisma);
+
+    const metrics = await service.getProductGroundingMetrics('org-1');
+
+    expect(metrics.totalCampaignsWithUrl).toBe(3);
+    expect(metrics.deterministicSucceededCount).toBe(1);
+    expect(metrics.llmFallbackTriggeredCount).toBe(2);
+  });
+
+  it('compte les conflits totaux/non résolus/critiques (brand ou name en UNRESOLVED)', async () => {
+    const { prisma } = buildPrisma({
+      traces: [
+        {
+          campaignId: 'c1',
+          productUrlFacts: { extractionMethod: 'JSON_LD' },
+          productConflicts: [
+            { attribute: 'brand', resolution: 'UNRESOLVED', sources: [], reason: '' },
+            { attribute: 'category', resolution: 'UNRESOLVED', sources: [], reason: '' },
+            { attribute: 'name', resolution: 'URL_PREFERRED', sources: [], reason: '' },
+          ],
+        },
+      ],
+    });
+    const service = new PipelineMetricsService(prisma);
+
+    const metrics = await service.getProductGroundingMetrics('org-1');
+
+    expect(metrics.totalConflicts).toBe(3);
+    expect(metrics.totalUnresolvedConflicts).toBe(2);
+    expect(metrics.totalCriticalUnresolvedConflicts).toBe(1); // seul 'brand' est UNRESOLVED + identité critique
+  });
+
+  it('moyenne fetchDurationMs/redirectCount uniquement sur les traces qui les renseignent', async () => {
+    const { prisma } = buildPrisma({
+      traces: [
+        { campaignId: 'c1', productUrlFacts: { extractionMethod: 'JSON_LD', fetchDurationMs: 100, redirectCount: 0 }, productConflicts: [] },
+        { campaignId: 'c2', productUrlFacts: { extractionMethod: 'JSON_LD', fetchDurationMs: 300, redirectCount: 2 }, productConflicts: [] },
+        { campaignId: 'c3', productUrlFacts: { extractionMethod: 'JSON_LD' }, productConflicts: [] }, // pré-instrumentation, absent
+      ],
+    });
+    const service = new PipelineMetricsService(prisma);
+
+    const metrics = await service.getProductGroundingMetrics('org-1');
+
+    expect(metrics.averageFetchDurationMs).toBe(200);
+    expect(metrics.averageRedirectCount).toBe(1);
+  });
+
+  it('agrège le coût/tokens réels du repli LLM depuis AiGeneration (promptVersion productPageExtraction), jamais une estimation dupliquée', async () => {
+    const { prisma, aggregate } = buildPrisma({
+      traces: [{ campaignId: 'c1', productUrlFacts: { extractionMethod: 'LLM' }, productConflicts: [] }],
+      aiGenerationAgg: { costEstimate: 0.02, tokensUsed: 1200, durationMs: 850, count: 2 },
+    });
+    const service = new PipelineMetricsService(prisma);
+
+    const metrics = await service.getProductGroundingMetrics('org-1');
+
+    expect(metrics.llmFallback).toEqual({ totalGenerations: 2, totalCostEstimate: 0.02, totalTokensUsed: 1200, averageDurationMs: 850 });
+    expect(aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ campaignId: { in: ['c1'] }, promptVersion: 'product-page-extraction-v1' }) }),
+    );
+  });
+
+  it('scope toujours par organizationId et filtre productUrl non nul', async () => {
+    const { prisma, findMany } = buildPrisma();
+    const service = new PipelineMetricsService(prisma);
+
+    await service.getProductGroundingMetrics('org-42');
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ organizationId: 'org-42', productUrl: { not: null } }) }),
+    );
+  });
+});

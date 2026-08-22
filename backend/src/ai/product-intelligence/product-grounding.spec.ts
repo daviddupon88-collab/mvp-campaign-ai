@@ -1,5 +1,5 @@
 import { renderGroundedContext } from './product-grounding';
-import { ProductIntelligenceProfile } from '@prisma/client';
+import { ProductIntelligenceProfile, Prisma } from '@prisma/client';
 
 function buildProfile(overrides: Partial<ProductIntelligenceProfile> = {}): ProductIntelligenceProfile {
   return {
@@ -94,5 +94,59 @@ describe('renderGroundedContext', () => {
 
     expect(text).toContain('NON vérifiées');
     expect(text).toContain('Sans sulfate');
+  });
+
+  // Mission 4.4 (Product URL Intelligence, Phase I).
+  it('aucun productClaims/productConflicts (URL non fournie) : aucun bloc supplémentaire, comportement inchangé', () => {
+    const text = renderGroundedContext(buildProfile());
+
+    expect(text).not.toContain('FAITS PRODUIT VÉRIFIÉS');
+    expect(text).not.toContain('CONTRADICTIONS NON RÉSOLUES');
+  });
+
+  it('surface les claims vérifiées allowedForAdvertising=true dans un bloc dédié', () => {
+    const text = renderGroundedContext(
+      buildProfile({
+        productClaims: [
+          { id: '1', text: 'Capacité : 750 ml', source: 'PRODUCT_URL', evidence: 'JSON-LD', confidence: 0.95, allowedForAdvertising: true },
+          { id: '2', text: 'Le meilleur produit du marché', source: 'PRODUCT_URL', evidence: 'texte marketing libre', confidence: 0.3, allowedForAdvertising: false },
+        ] as unknown as Prisma.JsonValue,
+      }),
+    );
+
+    expect(text).toContain('FAITS PRODUIT VÉRIFIÉS');
+    expect(text).toContain('Capacité : 750 ml');
+    expect(text).not.toContain('Le meilleur produit du marché');
+  });
+
+  it('surface un conflit UNRESOLVED explicitement, jamais masqué', () => {
+    const text = renderGroundedContext(
+      buildProfile({
+        productConflicts: [
+          {
+            attribute: 'capacity',
+            sources: [{ source: 'PRODUCT_URL', value: '750 ml', confidence: 0.9 }, { source: 'IMAGE', value: '1 L', confidence: 0.85 }],
+            resolution: 'UNRESOLVED',
+            reason: 'Écart de confiance trop faible pour trancher.',
+          },
+        ] as unknown as Prisma.JsonValue,
+      }),
+    );
+
+    expect(text).toContain('CONTRADICTIONS NON RÉSOLUES');
+    expect(text).toContain('capacity');
+    expect(text).toContain('ne choisis JAMAIS arbitrairement');
+  });
+
+  it('un conflit RÉSOLU (pas UNRESOLVED) ne déclenche pas le bloc de contradiction', () => {
+    const text = renderGroundedContext(
+      buildProfile({
+        productConflicts: [
+          { attribute: 'brand', sources: [{ source: 'PRODUCT_URL', value: 'X', confidence: 0.9 }], resolution: 'URL_PREFERRED', reason: 'x' },
+        ] as unknown as Prisma.JsonValue,
+      }),
+    );
+
+    expect(text).not.toContain('CONTRADICTIONS NON RÉSOLUES');
   });
 });

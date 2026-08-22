@@ -8,6 +8,7 @@ import { VideoJudgeResult } from './video-judge.types';
 import { ShotQualityResult } from '../video-direction/video-analyzer.service';
 import { VisualDna } from '../video-direction/visual-dna.service';
 import { CreativeConcept } from '../creative-intelligence/creative-concept.types';
+import { NarrativeBlueprint } from '../creative-intelligence/narrative-blueprint.types';
 
 const CTX = { organizationId: 'org-1', campaignId: 'camp-1', purpose: 'campaign_generation' as const };
 const promptEngine = new PromptEngineService();
@@ -15,10 +16,14 @@ const promptEngine = new PromptEngineService();
 const VISUAL_DNA: VisualDna = { productCategory: 'x', colors: [], materials: [], shape: 'x', distinctiveFeatures: [], logoOrBrandMarks: null, raw: '{}' };
 const CONCEPT: CreativeConcept = {
   title: 't', concept: 'c', coreMessage: 'm', hook: 'h', emotionalDirection: 'e', visualDirection: 'v',
-  storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16', scenesCount: 2, raw: '{}',
+  storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16', scenesCount: 2, qualityAlignment: '', raw: '{}',
 };
 const SHOT_1: Shot = { sceneId: 'shot-1', camera: 'x', subject: 'product', motion: 'x', lighting: 'x', background: 'x' };
 const SHOT_2: Shot = { sceneId: 'shot-2', camera: 'x', subject: 'product', motion: 'x', lighting: 'x', background: 'x' };
+const NARRATIVE_BLUEPRINT: NarrativeBlueprint = {
+  hook: '', problem: '', tension: '', reveal: '', productIntroduction: '',
+  benefit: '', proof: '', emotionalPayoff: '', cta: '', pacing: '', pausePoints: [], beats: [], raw: '{}',
+};
 
 function buildQuality(score: number): ShotQualityResult {
   return {
@@ -95,6 +100,7 @@ function buildParams(overrides: Partial<QualityLoopParams> = {}): QualityLoopPar
     visualDna: VISUAL_DNA,
     referenceImageUrl: 'https://cdn.example.com/photo.png',
     concept: CONCEPT,
+    narrativeBlueprint: NARRATIVE_BLUEPRINT,
     productProfile: null,
     ...overrides,
   };
@@ -148,6 +154,74 @@ describe('VideoQualityLoopService.run', () => {
     expect(deps.aiGateway.generateVideo).not.toHaveBeenCalled();
   });
 
+  // Mission 4.5 (Contrôle A1, campagne réelle 2026-08-22) — bug réel confirmé : AUDIO_REGEN
+  // régénérait auparavant l'audio depuis params.narrationText (une chaîne FIGÉE, calculée une
+  // seule fois avant la boucle) — si ce texte était déjà défectueux (cta tronqué), chaque
+  // réparation ne faisait que ré-enregistrer une nouvelle prise du MÊME script cassé.
+  describe('AUDIO_REGEN reconstruit la narration depuis le NarrativeBlueprint (correction Mission 4.5)', () => {
+    it('ctaClarity : le prompt envoyé à generateAudio provient du NarrativeBlueprint reconstruit, jamais de params.narrationText tel quel', async () => {
+      const blueprint: NarrativeBlueprint = {
+        hook: 'Un rayon rempli de bouteilles identiques.',
+        problem: '', tension: '', reveal: '', productIntroduction: '', benefit: '', proof: '', emotionalPayoff: '',
+        cta: 'Achetez maintenant — Lalla Khedidja, 1,5L, en ligne.',
+        pacing: '', pausePoints: [], beats: [], raw: '{}',
+      };
+      const deps = buildDeps({ judgeResults: [repairRequired([{ name: 'ctaClarity' as any, score: 40, defect: 'CTA vocal absent' }]), PASS()] });
+      const service = new VideoQualityLoopService(deps.aiGateway, promptEngine, deps.videoDirector, deps.videoFinalization, deps.videoJudge);
+
+      await service.run(CTX, buildParams({ narrativeBlueprint: blueprint, narrationText: 'un mai' /* texte figé volontairement cassé, ne doit JAMAIS être réutilisé */ }));
+
+      const [, callParams] = (deps.aiGateway.generateAudio as jest.Mock).mock.calls[0];
+      expect(callParams.prompt).toContain('Achetez maintenant — Lalla Khedidja, 1,5L, en ligne.');
+      expect(callParams.prompt).not.toBe('un mai');
+    });
+
+    // Mission 4.5 (Phases A2-A5) — interrupteur expérimental temporaire.
+    it('flag MISSION_4_5_LEGACY_NARRATION=true : rejoue le comportement historique (réutilise params.narrationText tel quel)', async () => {
+      const ORIGINAL_ENV = process.env.MISSION_4_5_LEGACY_NARRATION;
+      process.env.MISSION_4_5_LEGACY_NARRATION = 'true';
+      try {
+        const blueprint: NarrativeBlueprint = {
+          hook: 'Un rayon rempli de bouteilles identiques.',
+          problem: '', tension: '', reveal: '', productIntroduction: '', benefit: '', proof: '', emotionalPayoff: '',
+          cta: 'Achetez maintenant — Lalla Khedidja, 1,5L, en ligne.',
+          pacing: '', pausePoints: [], beats: [], raw: '{}',
+        };
+        const deps = buildDeps({ judgeResults: [repairRequired([{ name: 'ctaClarity' as any, score: 40, defect: 'CTA vocal absent' }]), PASS()] });
+        const service = new VideoQualityLoopService(deps.aiGateway, promptEngine, deps.videoDirector, deps.videoFinalization, deps.videoJudge);
+
+        await service.run(CTX, buildParams({ narrativeBlueprint: blueprint, narrationText: 'texte figé historique' }));
+
+        const [, callParams] = (deps.aiGateway.generateAudio as jest.Mock).mock.calls[0];
+        expect(callParams.prompt).toBe('texte figé historique');
+      } finally {
+        if (ORIGINAL_ENV === undefined) delete process.env.MISSION_4_5_LEGACY_NARRATION;
+        else process.env.MISSION_4_5_LEGACY_NARRATION = ORIGINAL_ENV;
+      }
+    });
+
+    it('narrativeBlueprint inchangé entre 2 tentatives : reconstruction déterministe, jamais un texte différent à chaque essai sans raison', async () => {
+      const blueprint: NarrativeBlueprint = {
+        hook: 'Hook stable.', problem: '', tension: '', reveal: '', productIntroduction: '', benefit: '', proof: '', emotionalPayoff: '',
+        cta: 'CTA stable.', pacing: '', pausePoints: [], beats: [], raw: '{}',
+      };
+      const deps = buildDeps({
+        judgeResults: [
+          repairRequired([{ name: 'ctaClarity' as any, score: 40, defect: 'CTA vocal absent' }]),
+          repairRequired([{ name: 'ctaClarity' as any, score: 45, defect: 'CTA vocal encore absent' }]),
+          PASS(),
+        ],
+      });
+      const service = new VideoQualityLoopService(deps.aiGateway, promptEngine, deps.videoDirector, deps.videoFinalization, deps.videoJudge);
+
+      await service.run(CTX, buildParams({ narrativeBlueprint: blueprint }));
+
+      const calls = (deps.aiGateway.generateAudio as jest.Mock).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0][1].prompt).toBe(calls[1][1].prompt); // même blueprint -> même narration reconstruite
+    });
+  });
+
   it('défaut CLIP_REGEN avec sceneRef explicite : régénère UNIQUEMENT ce plan, reconcatène, PASS au 2e jugement', async () => {
     const deps = buildDeps({ judgeResults: [repairRequired([{ name: 'motionDynamism' as any, score: 30, defect: 'trop statique', sceneRef: 'shot-2' }]), PASS()] });
     const service = new VideoQualityLoopService(deps.aiGateway, promptEngine, deps.videoDirector, deps.videoFinalization, deps.videoJudge);
@@ -156,7 +230,7 @@ describe('VideoQualityLoopService.run', () => {
 
     expect(outcome.status).toBe('PASSED');
     expect(deps.aiGateway.generateVideo).toHaveBeenCalledTimes(1);
-    expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), undefined, undefined);
+    expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), expect.anything(), undefined, undefined);
     expect(deps.videoFinalization.concatenateClips).toHaveBeenCalledTimes(1); // 2 clips -> reconcaténation nécessaire
   });
 
@@ -185,7 +259,7 @@ describe('VideoQualityLoopService.run', () => {
 
     expect(outcome.status).toBe('PASSED');
     expect(deps.aiGateway.generateVideo).toHaveBeenCalledTimes(1);
-    expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), undefined, undefined);
+    expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), expect.anything(), undefined, undefined);
     // Le lot reconcaténé conserve les 3 clips inchangés + le seul clip régénéré (shot-2)
     const recomposedContents = (deps.videoFinalization.concatenateClips as jest.Mock).mock.calls[0][0];
     expect(recomposedContents).toEqual([
@@ -206,7 +280,7 @@ describe('VideoQualityLoopService.run', () => {
 
     expect(deps.aiGateway.generateVideo).toHaveBeenCalledTimes(2); // repair 1 + repair 2 (escaladé, pas bloqué : FAIBLE n'est jamais un skip)
     const secondCall = (deps.videoDirector.repairShotPrompt as jest.Mock).mock.calls[1];
-    expect(secondCall[3]).toEqual({ priorFailureReason: 'toujours un peu statique' });
+    expect(secondCall[4]).toEqual({ priorFailureReason: 'toujours un peu statique' });
   });
 
   it("Phase B — le même défaut RÉGRESSE (delta<0, ECHEC) après une 1re réparation : la 2e tentative ne répète JAMAIS la même stratégie, épuisement immédiat", async () => {
@@ -261,8 +335,8 @@ describe('VideoQualityLoopService.run', () => {
     await service.run(CTX, buildParams());
 
     expect(deps.aiGateway.generateVideo).toHaveBeenCalledTimes(1); // seulement productConsistency, jamais motionDynamism (MINEUR)
-    expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), undefined, undefined);
-    expect(deps.videoDirector.repairShotPrompt).not.toHaveBeenCalledWith(SHOT_1, expect.anything(), expect.anything(), expect.anything());
+    expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), expect.anything(), undefined, undefined);
+    expect(deps.videoDirector.repairShotPrompt).not.toHaveBeenCalledWith(SHOT_1, expect.anything(), expect.anything(), expect.anything(), expect.anything());
   });
 
   it("défaut CLIP_REGEN SANS sceneRef : cible le plan le PIRE noté (perShotQuality), pas un plan arbitraire", async () => {
@@ -272,7 +346,7 @@ describe('VideoQualityLoopService.run', () => {
     await service.run(CTX, buildParams());
 
     // shot-2 a le pire qualityScore (40) dans buildParams() par défaut.
-    expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), undefined, undefined);
+    expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), expect.anything(), undefined, undefined);
   });
 
   describe('Mission 4 Phase H — gate de confiance dédié formatCompliance/sceneConsistency (jamais de repli sur la pire scène pour ces deux critères)', () => {
@@ -300,7 +374,7 @@ describe('VideoQualityLoopService.run', () => {
 
       expect(outcome.status).toBe('PASSED');
       expect(deps.aiGateway.generateVideo).toHaveBeenCalledTimes(1);
-      expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), undefined, undefined);
+      expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), expect.anything(), undefined, undefined);
     });
 
     it('TEST 16 (Round 4) — formatCompliance détecté sur toute la vidéo (sceneRef absent), même à confiance élevée : AUCUN CLIP_REGEN, jamais de repli sur la pire scène', async () => {
@@ -339,7 +413,7 @@ describe('VideoQualityLoopService.run', () => {
 
       expect(outcome.status).toBe('PASSED');
       expect(deps.aiGateway.generateVideo).toHaveBeenCalledTimes(1);
-      expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), undefined, undefined);
+      expect(deps.videoDirector.repairShotPrompt).toHaveBeenCalledWith(SHOT_2, expect.anything(), expect.anything(), undefined, undefined);
     });
 
     it('formatCompliance sans confidence renseignée du tout : gate refusé, jamais un repli optimiste malgré un sceneRef présent', async () => {

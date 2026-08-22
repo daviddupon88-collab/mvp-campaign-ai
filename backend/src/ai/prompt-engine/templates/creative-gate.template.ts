@@ -8,6 +8,9 @@ export interface CreativeGateContext {
   creativeConcept: CreativeConcept;
   objective: string;
   groundedContextBlock: string; // renderGroundedContext(profile), '' si aucun profil
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 1) — renderQualityRequirementsForPrompt(...),
+  // '' si aucune exigence de construction applicable au stade concept.
+  qualityRequirementsBlock: string;
 }
 
 // Template CREATIVE_GATE (Phase G, chantier "Moteur d'optimisation de la qualité vidéo — V2",
@@ -53,7 +56,7 @@ Intelligence publicitaire :
 ${JSON.stringify(context.creativeIntelligence)}
 
 Concept publicitaire proposé :
-${JSON.stringify(context.creativeConcept)}${context.groundedContextBlock}
+${JSON.stringify(context.creativeConcept)}${context.groundedContextBlock}${context.qualityRequirementsBlock}
 
 Évalue sur les 9 dimensions pondérées (somme=100) : ${this.evaluationCriteria!.slice(0, 9).join(', ')}.
 

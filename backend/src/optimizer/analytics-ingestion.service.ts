@@ -198,7 +198,13 @@ export class AnalyticsIngestionService {
     // Best-effort, hors du chemin critique : la conversion est déjà enregistrée côté
     // Campaign-ai (ROAS calculable) même si ce push externe échoue ou est ignoré (aucune
     // config Meta CAPI, aucun clic récent à attribuer) — cf. MetaCapiService.
-    void this.metaCapi.pushConversion(organizationId, campaignId, { value: params.value, currency: DEFAULT_CURRENCY });
+    // .catch() défensif (2026-08-22) : pushConversion() protège déjà tout son corps en interne,
+    // mais un appel fire-and-forget sans filet ici redeviendrait un crash process-wide au moindre
+    // refactor qui romprait cette garantie interne — cf. audit forensic, même classe de bug que
+    // narrationPromise (ai-orchestrator.service.ts).
+    this.metaCapi
+      .pushConversion(organizationId, campaignId, { value: params.value, currency: DEFAULT_CURRENCY })
+      .catch((error) => this.logger.error(`Push Meta CAPI non intercepté (campagne ${campaignId}) : ${error}`));
 
     return metric;
   }

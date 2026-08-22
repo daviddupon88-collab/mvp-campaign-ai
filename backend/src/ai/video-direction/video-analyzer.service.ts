@@ -15,6 +15,25 @@ import { PROMPT_VERSIONS } from '../prompt-versions';
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 if (ffprobeStatic?.path) ffmpeg.setFfprobePath(ffprobeStatic.path);
 
+// DIAGNOSTIC TEMPORAIRE (2026-08-22) — audit forensic d'un crash ffmpeg systématique
+// (STATUS_INTEGER_DIVIDE_BY_ZERO, code 3221225794) sur des clips réellement générés par le
+// fournisseur vidéo, alors que le même binaire/filtre fonctionne sur un clip synthétique de test.
+// Sauvegarde le buffer AVANT que le tmpDir ne soit nettoyé, pour inspection directe (ffprobe -v
+// verbose) une fois le prochain crash reproduit. À retirer une fois le diagnostic terminé — ne
+// doit jamais rester en production (écrit sur chaque échec, aucune rotation/purge).
+function dumpBufferForDiagnostic(buffer: Buffer, label: string): void {
+  try {
+    const dir = path.join(os.tmpdir(), 'campaign-ai-ffmpeg-crash-dumps');
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${label}-${Date.now()}-${randomUUID()}.mp4`);
+    fs.writeFileSync(filePath, buffer);
+    // eslint-disable-next-line no-console
+    console.error(`[DIAGNOSTIC] Buffer vidéo sauvegardé pour inspection : ${filePath}`);
+  } catch {
+    // Diagnostic best-effort — ne doit jamais masquer l'erreur ffmpeg originale.
+  }
+}
+
 export interface MotionQualityResult {
   passed: boolean;
   score: number; // 0-100, 100 = aucun gel détecté
@@ -147,6 +166,9 @@ export class VideoAnalyzerService {
         freezeRatio,
         reasons: passed ? [] : [`Vidéo quasi-statique : ${totalFrozen.toFixed(1)}s sur ${durationSeconds.toFixed(1)}s sans mouvement détecté`],
       };
+    } catch (error) {
+      dumpBufferForDiagnostic(buffer, 'motion');
+      throw error;
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -215,6 +237,9 @@ Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact :
 
       const result = await this.aiGateway.analyzeImage(ctx, { prompt, imageUrl: frameDataUri }, 'openai', PROMPT_VERSIONS.visualFidelity);
       return this.parseFidelityResult(result.content);
+    } catch (error) {
+      dumpBufferForDiagnostic(buffer, 'fidelity');
+      throw error;
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

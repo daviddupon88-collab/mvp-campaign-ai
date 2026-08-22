@@ -24,9 +24,10 @@ export interface FinalDeliveryInput {
 export interface FinalDeliveryResult {
   deliverable: boolean;
   blockingReasons: string[];
-  // true dès qu'au moins un plan planifié n'a pas été livré — TOUJOURS renseigné, y compris
-  // quand ce n'est pas bloquant (cf. MIN_SHOT_DELIVERY_RATIO ci-dessous) : le signal ne doit
-  // JAMAIS dépendre de savoir si le seuil de blocage a été atteint (P0-4).
+  // true dès qu'au moins un plan planifié n'a pas été livré. Depuis Mission 4.3 (Étape 14/18,
+  // tolérance zéro), ce cas est TOUJOURS aussi présent dans blockingReasons — le champ reste
+  // néanmoins distinct de `deliverable` pour que l'appelant puisse le citer explicitement (cf.
+  // campaign-generation.processor.ts) sans reparser blockingReasons.
   partialDelivery: boolean;
 }
 
@@ -34,15 +35,14 @@ export interface FinalDeliveryResult {
 // contrôle reste un point d'extension documenté, pas une vraie logique multi-format.
 const SUPPORTED_FORMAT = '9:16';
 
-// Audit forensique Mission 4.2 (P0-4) : NE PAS bloquer automatiquement toute livraison partielle
-// — la correction obligatoire de cette même mission ("ne pas considérer automatiquement une
-// vidéo 3/4 comme livrable... puis appliquer les gates normaux") demande explicitement que le
-// Video Judge et les gates existants restent seuls juges de la qualité d'une vidéo partielle,
-// jamais un rejet automatique dès le 1er plan manquant. Ce seuil est un filet de sécurité pour
-// le cas dégénéré (ex. 1 plan livré sur 5), pas un plancher de complétude à 100% — configurable,
-// documenté, jamais le même symbole qu'un autre seuil du pipeline (cf. PASS_THRESHOLD etc.).
-const MIN_SHOT_DELIVERY_RATIO = 0.5;
-
+// Mission 4.3 (Goal-First Quality Architecture, Phase 1, Étape 14/18) — SUPERSÈDE la politique de
+// tolérance 50% de l'audit forensique Mission 4.2 (P0-4). Cette même mission impose désormais une
+// règle absolue explicite : "deliveredShots === plannedShots... Une vidéo 3/4 ne peut pas être
+// considérée comme une livraison complète" (tolérance = 0). L'ancien raisonnement (laisser le
+// Video Judge et les gates seuls juges d'une vidéo partielle, ne bloquer qu'un cas dégénéré) reste
+// valable EN GÉNÉRAL, mais la construction goal-first vise justement à rendre la livraison
+// partielle rare — quand elle survient malgré tout, elle doit être un signal dur, pas une
+// tolérance silencieuse de 50%.
 export function evaluateFinalDelivery(input: FinalDeliveryInput): FinalDeliveryResult {
   const blockingReasons: string[] = [];
 
@@ -63,9 +63,9 @@ export function evaluateFinalDelivery(input: FinalDeliveryInput): FinalDeliveryR
   }
 
   const partialDelivery = input.plannedShotCount > 0 && input.deliveredShotCount < input.plannedShotCount;
-  if (partialDelivery && input.deliveredShotCount / input.plannedShotCount < MIN_SHOT_DELIVERY_RATIO) {
+  if (partialDelivery) {
     blockingReasons.push(
-      `Livraison trop partielle : ${input.deliveredShotCount}/${input.plannedShotCount} plan(s) prévu(s) réellement livré(s) (minimum ${Math.ceil(MIN_SHOT_DELIVERY_RATIO * 100)}%)`,
+      `Livraison incomplète : ${input.deliveredShotCount}/${input.plannedShotCount} plan(s) prévu(s) réellement livré(s) — tolérance zéro (Mission 4.3, Étape 14/18)`,
     );
   }
 

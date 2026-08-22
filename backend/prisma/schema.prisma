@@ -144,6 +144,7 @@ model Organization {
   brandMemoryContradictions BrandMemoryContradiction[]
 
   productIntelligenceProfiles ProductIntelligenceProfile[]
+  productUrlSnapshots         ProductUrlSnapshot[]
   creativeGenerationTraces    CreativeGenerationTrace[]
 
   metaCapiConfig MetaCapiConfig?
@@ -248,6 +249,12 @@ model Campaign {
   // description à l'utilisateur (avant cet ajout, seule la photo survivait à la création,
   // la description texte était perdue après le premier passage dans l'Orchestrator).
   productDescription String?
+
+  // Mission 4.4 (Product URL Intelligence) — URL EXTERNE arbitraire fournie par l'utilisateur
+  // (contrairement à productImageUrl, toujours dénormalisée depuis un Asset déjà téléversé),
+  // validée SSRF (product-page-url-validator.ts) avant tout fetch. Optionnelle : la campagne
+  // reste constructible sur la seule photo/description si l'URL est absente ou inaccessible.
+  productUrl String?
 
   // Garde-fous avant publication : validation humaine obligatoire + verdict de modération.
   // Le passage à PUBLISHED ne peut jamais sauter l'étape APPROVED (cf. PublishingService).
@@ -695,9 +702,43 @@ model ProductIntelligenceProfile {
   lastUpdated DateTime @updatedAt
   createdAt   DateTime @default(now())
 
+  // Mission 4.4 (Product URL Intelligence) — additif, tous optionnels : un profil construit
+  // avant ce chantier (ou sans productUrl fourni) reste valide sans eux. La clé de cache reste
+  // (organizationId, imageHash) — jamais changée pour ne pas risquer la logique de cache
+  // existante ; ProductUrlSnapshot (ci-dessous) est la couche de cache dédiée à l'URL, en amont
+  // de la construction de CE profil, pas un second système de cache concurrent.
+  productUrl      String? // URL produit fournie par l'utilisateur, le cas échéant
+  productUrlFacts Json? // ProductUrlFacts brut (cf. product-page/product-url-facts.types.ts)
+  productFacts    Json? // ProductFact[] résolus par la fusion (cf. product-fact.types.ts)
+  productClaims   Json? // ProductClaim[] résolues par la fusion
+  productConflicts Json? // ProductFactConflict[] — jamais masqué, cf. PreFlightQualityGate/StoryboardGateService
+
   @@unique([organizationId, imageHash])
   @@index([organizationId])
   @@map("product_intelligence_profiles")
+}
+
+// Mission 4.4 (Product URL Intelligence, Phase U) — cache dédié pour la page produit RÉCUPÉRÉE
+// (pas pour le profil final, cf. ProductIntelligenceProfile ci-dessus) : une même URL réutilisée
+// pour une nouvelle campagne ne refait pas inutilement le fetch/extraction. Fraîcheur contrôlée
+// par expiresAt (TTL fixe) ET contentHash (si le contenu a changé avant expiration, une nouvelle
+// extraction est déclenchée malgré tout — cf. product-intelligence.service.ts).
+model ProductUrlSnapshot {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  normalizedUrl   String
+  contentHash     String // sha256 du HTML récupéré — détecte un changement de contenu avant expiration
+  extractedFacts  Json // ProductUrlFacts complet
+  extractedClaims Json // ProductClaim[] (dupliqué depuis extractedFacts.claims pour requête directe)
+
+  retrievedAt DateTime @default(now())
+  expiresAt   DateTime
+
+  @@unique([organizationId, normalizedUrl])
+  @@index([organizationId])
+  @@map("product_url_snapshots")
 }
 
 // Creative Generation Trace (P0.11, chantier "Creative Intelligence Engine & Video Quality
@@ -734,6 +775,32 @@ model CreativeGenerationTrace {
   elapsedMs       Int? // durée totale (génération + Quality Loop + escalades), wall-clock
   attemptCount    Int? // cycles Quality Loop consommés au total, toutes escalades confondues
   escalationLevel String? // 'SCENE' | 'STORYBOARD' | 'CONCEPT' — plus haut niveau atteint
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 1, Étape 1) — QualityTarget complet
+  // (targetScore/version/criticalCriteria/minimumCriticalScore/prohibitedConditions), créé AVANT
+  // le Creative Concept par AiOrchestratorService.generateCampaign() et mené sans recalcul jusqu'à
+  // la persistance ici. Optionnel : les traces antérieures à ce chantier n'en ont pas.
+  qualityTarget Json?
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 6b, Étape 23) — résultat COMPLET du
+  // dernier Storyboard Gate/PreProductionQualityJudge (Phase 5b) franchi pour cette génération
+  // (criterionScores/blockingDefects/risks/requiredChanges/rootCauseLevel/readyForGeneration).
+  // Optionnel : les traces antérieures à ce chantier n'en ont pas.
+  preProductionJudge Json?
+
+  // Mission 4.4 (Product URL Intelligence, Phase T) — additif, optionnel. Ne crée jamais une
+  // 2e trace concurrente : ces champs prolongent CreativeGenerationTrace existante.
+  productUrl       String?
+  productUrlFacts  Json? // ProductUrlFacts au moment de cette génération
+  productConflicts Json? // ProductFactConflict[] au moment de cette génération
+
+  // Mission 4.5 (validation expérimentale de la correction de narration, 2026-08-22) — additif,
+  // optionnel. true = cette génération a tourné avec l'ancien comportement narration (contrôle
+  // Ax, cf. narration-experiment-flag.ts), false = comportement corrigé (Bx), null = génération
+  // antérieure à cette expérimentation. Persisté pour garantir que le rapport A/B ne dépend
+  // jamais du nom de campagne (texte libre, non fiable) pour distinguer contrôle/expérimental —
+  // seule source de vérité vérifiable après coup.
+  narrationLegacyMode Boolean?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

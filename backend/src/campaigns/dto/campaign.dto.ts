@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNumber, IsArray } from 'class-validator';
+import { IsString, IsOptional, IsNumber, IsArray, IsUrl, MaxLength } from 'class-validator';
 
 export class CreateCampaignDto {
   @IsString()
@@ -15,6 +15,14 @@ export class CreateCampaignDto {
   // de transmettre l'URL réelle à l'analyse IA).
   @IsOptional() @IsString()
   productImageAssetId?: string;
+
+  // Mission 4.4 (Product URL Intelligence) — contrairement à productImageAssetId, c'est bien une
+  // URL EXTERNE arbitraire (page produit publique) : validation syntaxique ici, protection SSRF
+  // complète (résolution DNS + blocage d'adresses privées) appliquée plus tard dans le pipeline
+  // (product-page-url-validator.ts, avant tout fetch réel) — jamais au niveau du DTO, qui ne fait
+  // aucun accès réseau. Optionnelle : une campagne reste constructible sans elle.
+  @IsOptional() @IsUrl({ protocols: ['http', 'https'], require_protocol: true }) @MaxLength(2048)
+  productUrl?: string;
 
   @IsString()
   objective: string;

@@ -1,5 +1,6 @@
 import { JudgeCriterionName, JudgeCriterionResult, UNAVAILABLE_DEFECT } from './video-judge.types';
 import { RepairHistoryEntry } from './repair-history';
+import { GoalFirstRootCause } from '../video-direction/storyboard-gate.types';
 
 // Phase K — Cause racine (chantier "Optimisation du pipeline vidéo — V2.1", 2026-08-19, spec
 // Section 3-5). Fonction PURE, coût zéro — même convention que repair-history.ts/repair-priority.ts.
@@ -115,4 +116,33 @@ export function classifyRootCause(
   }
 
   return DETERMINISTIC_ROOT_CAUSE[criterion] ?? 'UNKNOWN';
+}
+
+// Mission 4.3 (Goal-First Quality Architecture, Phase 6b, Étape 23) — projection PURE, coût zéro,
+// des 12 catégories post-vidéo (RootCauseLevel, ci-dessus) vers les 7 catégories PRÉ-vidéo
+// (GoalFirstRootCause, déjà définies par le Storyboard Gate/PreProductionQualityJudge en Phase
+// 5b, cf. storyboard-gate.types.ts) — un seul vocabulaire de cause racine à terme dans
+// GoalFirstTrace, que le défaut ait été détecté avant ou après génération vidéo. Mapping fixe,
+// jamais recalculé au cas par cas : SCENE (un tirage isolé) -> SHOT ; STORYBOARD (le plan de
+// tournage lui-même) -> NARRATIVE ; PRODUCT_FIDELITY (le fournisseur rend le produit de façon
+// systématiquement incorrecte) -> PRODUCT ; AUDIO/VOICE/VISUAL_COMPOSITION/SUBTITLE (défauts
+// d'exécution mesurés sur le rendu final) -> EXECUTION ; PROVIDER/ASSEMBLY/UNKNOWN (incidents
+// techniques, jamais un vrai défaut de contenu) -> TECHNICAL ; BRAND -> BRAND ; CONCEPT -> CONCEPT.
+const ROOT_CAUSE_PROJECTION: Record<RootCauseLevel, GoalFirstRootCause> = {
+  SCENE: 'SHOT',
+  STORYBOARD: 'NARRATIVE',
+  CONCEPT: 'CONCEPT',
+  PROVIDER: 'TECHNICAL',
+  ASSEMBLY: 'TECHNICAL',
+  AUDIO: 'EXECUTION',
+  BRAND: 'BRAND',
+  PRODUCT_FIDELITY: 'PRODUCT',
+  UNKNOWN: 'TECHNICAL',
+  VOICE: 'EXECUTION',
+  VISUAL_COMPOSITION: 'EXECUTION',
+  SUBTITLE: 'EXECUTION',
+};
+
+export function projectToGoalFirstRootCause(level: RootCauseLevel): GoalFirstRootCause {
+  return ROOT_CAUSE_PROJECTION[level];
 }

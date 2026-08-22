@@ -71,7 +71,11 @@ export class CreativeIntelligenceService {
       strategyContent: params.strategyContent,
     });
 
-    const result = await this.aiGateway.generateText(ctx, { prompt }, 'anthropic', PROMPT_VERSIONS.creativeBrief);
+    // Bug réel constaté en conditions réelles (2026-08-21, même classe que StoryboardGateService/
+    // CreativeGateService/NarrativeBlueprintService/VideoJudgeService/CreativeConceptService) :
+    // sans maxTokens explicite, ce call retombe sur le défaut 4000 de AnthropicProvider —
+    // schéma à 16 champs texte, risque réel de troncature JSON en sortie.
+    const result = await this.aiGateway.generateText(ctx, { prompt, maxTokens: 8000 }, 'anthropic', PROMPT_VERSIONS.creativeBrief);
     return this.parse(result.content);
   }
 

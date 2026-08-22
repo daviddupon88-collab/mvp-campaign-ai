@@ -1,5 +1,7 @@
 import { CampaignGenerationProcessor } from './campaign-generation.processor';
 import { PlanLimitExceededException } from '../plans/plan-limit.exception';
+import { QUALITY_TARGET_V1 } from '../ai/quality/quality-target';
+import * as processHealth from '../common/observability/process-health';
 
 function buildGenerationResult(overrides: Record<string, any> = {}) {
   return {
@@ -15,11 +17,17 @@ function buildGenerationResult(overrides: Record<string, any> = {}) {
     // défaut (les tests qui en ont besoin les précisent explicitement).
     videoClips: [],
     narrationText: 'narration par défaut',
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — requis par finalizeVideoAsset pour
+    // thread jusqu'à tryEscalate -> regenerateShotPlanAndVideo lors d'une escalade STORYBOARD.
+    narrativeBlueprint: {
+      hook: 'h', problem: 'p', tension: 't', reveal: 'r', productIntroduction: 'i',
+      benefit: 'b', proof: 'pr', emotionalPayoff: 'e', cta: 'c', pacing: 'x', pausePoints: [], beats: [], raw: '{}',
+    },
     shotPlan: [],
     perShotQuality: new Map(),
     visualDnaResult: { productCategory: 'x', colors: [], materials: [], shape: 'x', distinctiveFeatures: [], logoOrBrandMarks: null, raw: '{}' },
     referenceImageUrl: 'https://provider.example/photo-source.png',
-    creativeConcept: { title: 't', concept: 'c', coreMessage: 'm', hook: 'h', emotionalDirection: 'e', visualDirection: 'v', storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16', scenesCount: 1, raw: '{}' },
+    creativeConcept: { title: 't', concept: 'c', coreMessage: 'm', hook: 'h', emotionalDirection: 'e', visualDirection: 'v', storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16', scenesCount: 1, qualityAlignment: '', raw: '{}' },
     creativeIntelligence: { adObjective: 'x', targetAudience: 'x', primaryProblem: 'x', primaryDesire: 'x', primaryBenefit: 'x', valueProposition: 'x', creativeAngle: 'x', desiredEmotion: 'x', hook: 'x', proofToShow: 'x', objections: [], mainMessage: 'x', cta: 'x', visualTone: 'x', pacing: 'x', adStyle: 'x', raw: '{}' },
     productProfile: null,
     maxRepairAttempts: 2,
@@ -28,6 +36,10 @@ function buildGenerationResult(overrides: Record<string, any> = {}) {
     // (déjà couverte par creative-gate.service.spec.ts/storyboard-gate.service.spec.ts dédiés).
     creativeGateStatus: 'APPROVED',
     storyboardGateStatus: 'APPROVED',
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 1) — requis par finalizeVideoAsset pour
+    // thread jusqu'à creativeGenerationTrace.upsertTrace/regenerateShotPlanAndVideo/
+    // regenerateConceptStoryboardAndVideo lors d'une escalade.
+    qualityTarget: QUALITY_TARGET_V1,
     // Phase P (chantier "Optimisation du pipeline vidéo — V2.1", 2026-08-19) — requis par
     // finalizeVideoAsset pour appeler regenerateShotPlanAndVideo/regenerateConceptStoryboardAndVideo
     // lors d'une escalade ; neutre par défaut (les tests d'escalade le précisent explicitement).
@@ -120,6 +132,59 @@ function buildJob(attemptsMade: number, attempts: number) {
   } as any;
 }
 
+// Mission 4.5 (stabilisation infrastructure, 2026-08-22) — CAUSE PROBABLE identifiée de l'arrêt
+// silencieux du backend : bullmq.Worker émet 'error' pour des incidents de fond (perte Redis,
+// échec de renouvellement de lock...) SANS AUCUN LIEN avec un job en cours ; un événement
+// 'error' émis sans AUCUN listener est levé comme une exception JS non interceptée (spécificité
+// d'EventEmitter). Avant ce correctif, ce processeur n'avait aucun @OnWorkerEvent('error').
+describe("CampaignGenerationProcessor — @OnWorkerEvent('error') (Mission 4.5)", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("attache réellement un handler pour 'error' — la seule preuve qui compte : la méthode existe et ne lève jamais elle-même", () => {
+    const { processor } = buildProcessor();
+    const logSpy = jest.spyOn(processHealth, 'logProcessEvent').mockImplementation(() => undefined);
+
+    expect(() => processor.onWorkerError(new Error('connexion Redis perdue'))).not.toThrow();
+    expect(logSpy).toHaveBeenCalledWith('bullmq_worker_error', expect.objectContaining({ error: expect.objectContaining({ message: 'connexion Redis perdue' }) }));
+  });
+
+  it("journalise même une valeur rejetée qui n'est pas une Error, sans planter", () => {
+    const { processor } = buildProcessor();
+    const logSpy = jest.spyOn(processHealth, 'logProcessEvent').mockImplementation(() => undefined);
+
+    expect(() => processor.onWorkerError('panne brute')).not.toThrow();
+    expect(logSpy).toHaveBeenCalledWith('bullmq_worker_error', expect.objectContaining({ error: expect.objectContaining({ message: 'panne brute' }) }));
+  });
+});
+
+// Mission 4.5 (stabilisation infrastructure) — répond à "dernière campagne et dernier événement
+// connus" + "correlation ID campagne" : permet à un handler uncaughtException/unhandledRejection
+// de savoir CE QUI se passait juste avant un crash, même si la stack elle-même ne le dit pas.
+describe('CampaignGenerationProcessor — traçabilité process (recordActivity, Mission 4.5)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('job réussi : enregistre le démarrage PUIS la complétion, avec campaignId/jobId', async () => {
+    const activitySpy = jest.spyOn(processHealth, 'recordActivity').mockImplementation(() => undefined);
+    const { processor } = buildProcessor();
+
+    await processor.process(buildJob(0, 2));
+
+    expect(activitySpy).toHaveBeenCalledWith('campaign_job_started', expect.objectContaining({ campaignId: 'campaign-1', jobId: 'job-1' }));
+    expect(activitySpy).toHaveBeenCalledWith('campaign_job_completed', expect.objectContaining({ campaignId: 'campaign-1', jobId: 'job-1' }));
+  });
+
+  it('job définitivement échoué (dernière tentative) : enregistre campaign_job_failed avec la raison', async () => {
+    const activitySpy = jest.spyOn(processHealth, 'recordActivity').mockImplementation(() => undefined);
+    const generateCampaign = jest.fn().mockRejectedValue(new Error('panne définitive'));
+    const { processor } = buildProcessor({ generateCampaign });
+
+    await processor.process(buildJob(1, 2)); // dernière tentative
+
+    expect(activitySpy).toHaveBeenCalledWith('campaign_job_started', expect.objectContaining({ campaignId: 'campaign-1' }));
+    expect(activitySpy).toHaveBeenCalledWith('campaign_job_failed', expect.objectContaining({ campaignId: 'campaign-1', jobId: 'job-1' }));
+  });
+});
+
 // Couvre la correction du bug identifié à l'audit : une exception pendant la génération
 // (crédits épuisés, panne fournisseur) ne mettait jamais à jour la campagne, qui restait
 // IN_PROGRESS indéfiniment sans notification — cf. plan de correction, Phase 1.
@@ -181,6 +246,24 @@ describe('CampaignGenerationProcessor — gestion des échecs', () => {
 
     const call = campaignUpdate.mock.calls[0][0];
     expect(call.data.failureReason).toContain('plan de tournage');
+    expect(call.data.failureReason).not.toContain('seuil de qualité requis après plusieurs tentatives de correction');
+  });
+
+  // Bug réel constaté en conditions réelles (2026-08-21) : un rejet de PreFlightQualityGate
+  // (Mission 4.3 Phase 5) ne matchait aucun sous-cas dédié et retombait sur le message générique
+  // post-vidéo — factuellement faux ici (le gate bloque AVANT tout generateVideo, comme le
+  // Storyboard/Creative Gate ci-dessus).
+  it('PreFlightQualityGate bloqué (Phase 5) : message dédié, distinct du message générique de la Quality Loop', async () => {
+    const generateCampaign = jest.fn().mockRejectedValue(
+      new Error("QUALITY_GATE: pré-vol qualité échoué — Aucun beat narratif défini dans le NarrativeBlueprint.; 4 plan(s) référencent un narrativeBeatId inconnu du NarrativeBlueprint : shot-1, shot-2, shot-3, shot-4.. Aucune vidéo n'a été générée pour éviter de gaspiller des crédits sur un plan non conforme."),
+    );
+    const { processor, campaignUpdate } = buildProcessor({ generateCampaign });
+    const job = buildJob(0, 1);
+
+    await processor.process(job);
+
+    const call = campaignUpdate.mock.calls[0][0];
+    expect(call.data.failureReason).toContain('incohérences internes');
     expect(call.data.failureReason).not.toContain('seuil de qualité requis après plusieurs tentatives de correction');
   });
 
@@ -611,13 +694,19 @@ describe('CampaignGenerationProcessor — Phase P : escalade automatique EXÉCUT
       videoClips: [{ sceneId: 'shot-1-v2', content: 'https://provider.example/video-v2.mp4' }],
       perShotQuality: new Map(),
       storyboardGateStatus: 'APPROVED',
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 4) — regenerateShotPlanAndVideo le
+      // retourne désormais toujours (enrichi), consommé par finalizeVideoAsset.
+      narrativeBlueprint: {
+        hook: 'h', problem: 'p', tension: 't', reveal: 'r', productIntroduction: 'i',
+        benefit: 'b', proof: 'pr', emotionalPayoff: 'e', cta: 'c', pacing: 'x', pausePoints: [], beats: [], raw: '{}',
+      },
       ...overrides,
     };
   }
 
   function conceptEscalationResult(overrides: Record<string, any> = {}) {
     return {
-      creativeConcept: { title: 't2', concept: 'c2', coreMessage: 'm2', hook: 'h2', emotionalDirection: 'e', visualDirection: 'v', storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16', scenesCount: 1, raw: '{}' },
+      creativeConcept: { title: 't2', concept: 'c2', coreMessage: 'm2', hook: 'h2', emotionalDirection: 'e', visualDirection: 'v', storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16', scenesCount: 1, qualityAlignment: '', raw: '{}' },
       shotPlan: [NEW_SHOT],
       video: { content: 'https://provider.example/video-v3.mp4', generationId: 'gen-video-3' },
       videoClips: [{ sceneId: 'shot-1-v2', content: 'https://provider.example/video-v3.mp4' }],
@@ -627,6 +716,12 @@ describe('CampaignGenerationProcessor — Phase P : escalade automatique EXÉCUT
       narrationText: 'nouvelle narration',
       narrationDataUri: 'data:audio/mpeg;base64,bmV3',
       transcript: null,
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 4) — regenerateConceptStoryboardAndVideo
+      // le retourne désormais toujours (enrichi), consommé par finalizeVideoAsset.
+      narrativeBlueprint: {
+        hook: 'h2', problem: 'p', tension: 't', reveal: 'r', productIntroduction: 'i',
+        benefit: 'b', proof: 'pr', emotionalPayoff: 'e', cta: 'c', pacing: 'x', pausePoints: [], beats: [], raw: '{}',
+      },
       ...overrides,
     };
   }

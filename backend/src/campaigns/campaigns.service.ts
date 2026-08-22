@@ -10,6 +10,8 @@ import { EntitlementsService } from '../plans/entitlements.service';
 import { mapChannelSlugsToPlatforms } from '../plans/plan-catalog';
 import { CreativeVariationService } from '../ai/creative-intelligence/creative-variation.service';
 import { CreativeConcept } from '../ai/creative-intelligence/creative-concept.types';
+import { CreativeIntelligence } from '../ai/creative-intelligence/creative-intelligence.types';
+import { QualityTarget, QUALITY_TARGET_V1 } from '../ai/quality/quality-target';
 
 export interface ApprovalActor {
   userId: string;
@@ -116,6 +118,7 @@ export class CampaignsService {
         templateId: dto.templateId,
         productImageUrl,
         productDescription: dto.productDescription,
+        productUrl: dto.productUrl,
         status: 'IN_PROGRESS',
       },
     });
@@ -127,6 +130,7 @@ export class CampaignsService {
       campaignId: campaign.id,
       productDescription: dto.productDescription,
       productImageUrl,
+      productUrl: dto.productUrl,
       objective,
       channels,
       templateHints,
@@ -224,6 +228,18 @@ export class CampaignsService {
     // Repli sur la description enregistrée à la création si aucune nouvelle n'est fournie —
     // permet une relance fidèle depuis l'écran de détail sans redemander l'information.
     const productDescription = dto.productDescription?.trim() || campaign.productDescription || undefined;
+    // Mission 4.4 (Product URL Intelligence) — même repli que productDescription.
+    const productUrl = dto.productUrl?.trim() || campaign.productUrl || undefined;
+
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 7, Étape 19) — réutilisation CIBLÉE :
+    // quand photo/description/objectif/canaux sont IDENTIQUES à la dernière tentative ET qu'une
+    // CreativeGenerationTrace existe déjà (donc un concept publicitaire a déjà franchi le Creative
+    // Gate avec succès), on saute la reconstruction du concept (Creative Intelligence + Creative
+    // Concept + boucle Creative Gate — le trio le plus coûteux/itératif du pipeline) et on relance
+    // directement la production (Shot Plan -> vidéo) sur ce MÊME concept. Toute entrée modifiée
+    // (nouvelle photo, description, objectif ou canaux) désactive la réutilisation — reconstruire
+    // le concept sur d'autres entrées est le comportement attendu, pas une régression.
+    const reuseApprovedConcept = await this.buildConceptReuseIfEligible(campaign, dto, productDescription, productUrl);
 
     // Audit forensique Mission 4.2 (P1-7) : createPiece() est purement additive
     // (prisma.contentPiece.create, jamais de remplacement) et cette méthode ne supprimait/ne
@@ -248,6 +264,7 @@ export class CampaignsService {
         channels: dto.channels ?? campaign.channels ?? undefined,
         productImageUrl,
         productDescription,
+        productUrl,
       },
     });
 
@@ -256,11 +273,53 @@ export class CampaignsService {
       campaignId,
       productDescription,
       productImageUrl,
+      productUrl,
       objective: dto.objective ?? campaign.objective,
       channels: dto.channels ?? (campaign.channels as string[] | null) ?? [],
+      ...(reuseApprovedConcept ? { reuseApprovedConcept } : {}),
     });
 
     return this.getById(organizationId, campaignId);
+  }
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 7, Étape 19) — n'autorise la réutilisation
+  // QUE si aucune entrée n'a changé par rapport à la dernière tentative. Une nouvelle photo
+  // (dto.productImageAssetId fourni) invalide toujours la réutilisation, même si elle se résolvait
+  // par coïncidence à la même URL — un nouvel upload traduit une intention de changement, jamais
+  // présumée neutre.
+  private async buildConceptReuseIfEligible(
+    campaign: { id: string; productDescription: string | null; productUrl: string | null; objective: string | null; channels: unknown },
+    dto: CreateCampaignDto,
+    resolvedProductDescription: string | undefined,
+    resolvedProductUrl: string | undefined,
+  ): Promise<{ creativeIntelligence: CreativeIntelligence; creativeConcept: CreativeConcept; qualityTarget: QualityTarget } | null> {
+    if (dto.productImageAssetId) return null;
+    if (resolvedProductDescription !== (campaign.productDescription ?? undefined)) return null;
+    // Mission 4.4 (Product URL Intelligence) — une URL produit changée invalide la réutilisation
+    // au même titre qu'une description changée : de nouveaux faits produit potentiellement
+    // disponibles doivent pouvoir reconstruire le concept, jamais être ignorés silencieusement.
+    if (resolvedProductUrl !== (campaign.productUrl ?? undefined)) return null;
+    if (dto.objective && dto.objective !== campaign.objective) return null;
+    if (dto.channels) {
+      const currentChannels = new Set((campaign.channels as string[] | null) ?? []);
+      const requestedChannels = new Set(dto.channels);
+      if (currentChannels.size !== requestedChannels.size || [...requestedChannels].some((c) => !currentChannels.has(c))) return null;
+    }
+
+    // Seul chemin qui écrit une CreativeGenerationTrace : après que le Creative Gate a approuvé
+    // le concept (cf. CampaignGenerationProcessor.finalizeVideoAsset) — son existence garantit
+    // structurellement que creativeConcept/creativeIntelligence ci-dessous sont exploitables,
+    // jamais un concept jamais validé.
+    const trace = await this.prisma.creativeGenerationTrace.findUnique({ where: { campaignId: campaign.id } });
+    if (!trace) return null;
+
+    return {
+      creativeIntelligence: trace.creativeIntelligence as unknown as CreativeIntelligence,
+      creativeConcept: trace.creativeConcept as unknown as CreativeConcept,
+      // qualityTarget est optionnel sur la trace (traces antérieures à la Phase 1 de ce chantier) —
+      // repli sur la cible ACTUELLE (QUALITY_TARGET_V1), jamais une reconstruction devinée.
+      qualityTarget: (trace.qualityTarget as unknown as QualityTarget | null) ?? QUALITY_TARGET_V1,
+    };
   }
 
   // P0.12 — Variation créative (chantier "Creative Intelligence Engine & Video Quality Loop",

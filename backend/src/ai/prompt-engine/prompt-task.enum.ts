@@ -33,4 +33,10 @@ export enum PromptTask {
   // — nouvelles portes de validation amont, aucun placeholder existant ne correspondait.
   CREATIVE_GATE = 'CREATIVE_GATE',
   STORYBOARD_GATE = 'STORYBOARD_GATE',
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 3, Étape 4) — structure narrative
+  // intermédiaire entre CreativeConcept et narration/script de canal/rythme du Shot Plan.
+  NARRATIVE_BLUEPRINT = 'NARRATIVE_BLUEPRINT',
+  // Mission 4.4 (Product URL Intelligence, Phase H) — repli UNIQUEMENT quand l'extraction
+  // déterministe (JSON-LD/OpenGraph/HTML) ne produit pas assez de faits exploitables.
+  PRODUCT_PAGE_EXTRACTION = 'PRODUCT_PAGE_EXTRACTION',
 }

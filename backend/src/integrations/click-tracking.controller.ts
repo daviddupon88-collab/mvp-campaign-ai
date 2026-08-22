@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Param, Query, Res } from '@nestjs/common';
+import { Controller, Get, Logger, NotFoundException, Param, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClickTrackingService } from './click-tracking.service';
@@ -9,6 +9,8 @@ import { ClickTrackingService } from './click-tracking.service';
 // GET /invitations/:token et GET /social/:platform/callback (absence de @UseGuards).
 @Controller('r')
 export class ClickTrackingController {
+  private readonly logger = new Logger(ClickTrackingController.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly clickTracking: ClickTrackingService,
@@ -27,14 +29,19 @@ export class ClickTrackingController {
     }
 
     // Best-effort et hors du chemin critique : la redirection ne doit jamais attendre après
-    // l'écriture du clic, ni échouer si elle échoue (cf. ClickTrackingService.recordClick).
-    void this.clickTracking.recordClick({
-      publishedPostId: post.id,
-      campaignId: post.campaignId,
-      organizationId: post.organizationId,
-      fbclid,
-      gclid,
-    });
+    // l'écriture du clic, ni échouer si elle échoue (cf. ClickTrackingService.recordClick, déjà
+    // protégée en interne). .catch() défensif ajouté (audit forensic 2026-08-22) : ce endpoint
+    // reçoit du trafic publicitaire réel non authentifié — un futur refactor qui romprait la
+    // protection interne de recordClick ferait sinon planter tout le process sur CHAQUE clic.
+    this.clickTracking
+      .recordClick({
+        publishedPostId: post.id,
+        campaignId: post.campaignId,
+        organizationId: post.organizationId,
+        fbclid,
+        gclid,
+      })
+      .catch((error) => this.logger.error(`Enregistrement de clic non intercepté (post ${post.id}) : ${error}`));
 
     return res.redirect(302, post.destinationUrl);
   }

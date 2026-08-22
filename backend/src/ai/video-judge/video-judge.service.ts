@@ -17,6 +17,7 @@ import { VisualDna } from '../video-direction/visual-dna.service';
 import { ShotQualityResult } from '../video-direction/video-analyzer.service';
 import { ShotPlan } from '../video-direction/video-director.service';
 import { CreativeConcept } from '../creative-intelligence/creative-concept.types';
+import { NarrativeBlueprint } from '../creative-intelligence/narrative-blueprint.types';
 import { renderGroundedContext } from '../product-intelligence/product-grounding';
 import {
   JudgeCriterionName,
@@ -51,6 +52,11 @@ export interface JudgeParams {
   perShotQuality: Map<string, ShotQualityResult>;
   visualDna: VisualDna;
   concept: CreativeConcept;
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 6c, Étape 10) — structure narrative
+  // RÉELLEMENT planifiée (beats avec requiredVoiceover/requiredVisualEvidence), déjà disponible à
+  // chaque site d'appel (VideoQualityLoopService) depuis la Phase 4 — permet une comparaison
+  // attendu-vs-réel dans buildTextCriteria, pas seulement un jugement contre le concept résumé.
+  narrativeBlueprint: NarrativeBlueprint;
   transcript: TranscriptSegment[] | null;
   productProfile: ProductIntelligenceProfile | null;
 }
@@ -76,6 +82,25 @@ const ADVERTISING_FLOOR = 60;
 const TARGET_LUFS = -16;
 const LUFS_TOLERANCE = 4;
 const NEUTRAL_SCORE = 50;
+
+// Mission 4.3 (Goal-First Quality Architecture, Phase 6, Étape 11) — corrige le dernier cas
+// résiduel de confusion mesure/défaut réel dans ce Judge (tous les autres critères groupés/
+// déterministes le géraient déjà correctement, cf. audit Phase 0/1) : une mesure de niveau sonore
+// ÉCHOUÉE sur la narration (narrationLufs===null, ex. panne ffprobe) était notée comme une
+// narration RÉELLEMENT silencieuse (score 20, défaut "Narration inaudible") — pouvait déclencher
+// un AUDIO_REGEN pour un défaut qui n'a peut-être jamais existé. Fonction MODULE-LEVEL exportée
+// (pas une méthode privée comme scoreLoudnessConvergence) : testable directement sans dépendre de
+// l'ordre des appels ffmpeg mockés dans video-judge.service.spec.ts (measureIntegratedLoudness est
+// invoqué 2 fois par buildAudioCriteria, ordre partagé avec les autres critères du même judge()).
+export function buildVoiceAudibilityCriterion(narrationLufs: number | null): JudgeCriterionResult {
+  if (narrationLufs === null) {
+    return { name: 'voiceAudibility', score: NEUTRAL_SCORE, justification: 'Mesure du niveau de la narration indisponible avant mixage.', defect: UNAVAILABLE_DEFECT };
+  }
+  if (narrationLufs <= -60) {
+    return { name: 'voiceAudibility', score: 20, justification: 'Narration silencieuse avant mixage.', defect: 'Narration inaudible' };
+  }
+  return { name: 'voiceAudibility', score: 90, justification: `Narration mesurée à ${narrationLufs.toFixed(1)} LUFS avant mixage — signal présent.` };
+}
 
 // P0.5 — Video Judge (chantier "Creative Intelligence Engine & Video Quality Loop",
 // 2026-08-18). Regarde la vidéo FINALE ASSEMBLÉE (pas un plan isolé, cf. VideoAnalyzerService
@@ -237,12 +262,7 @@ export class VideoJudgeService {
       ];
     }
     const narrationLufs = await this.measureIntegratedLoudness(narrationBuffer, 'mp3').catch(() => null);
-    const voiceAudibility: JudgeCriterionResult =
-      narrationLufs === null || narrationLufs <= -60
-        ? { name: 'voiceAudibility', score: 20, justification: 'Narration silencieuse ou non mesurable avant mixage.', defect: 'Narration inaudible' }
-        : { name: 'voiceAudibility', score: 90, justification: `Narration mesurée à ${narrationLufs.toFixed(1)} LUFS avant mixage — signal présent.` };
-
-    return [audioQuality, voiceAudibility];
+    return [audioQuality, buildVoiceAudibilityCriterion(narrationLufs)];
   }
 
   private scoreLoudnessConvergence(measuredLufs: number | null): JudgeCriterionResult {
@@ -739,9 +759,14 @@ Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact :
       const transcriptText = (params.transcript ?? []).map((s) => s.text).join(' ');
       const plannedOnScreenText = params.shotPlan.map((s) => s.onScreenText).filter(Boolean).join(' | ');
       const groundedContextBlock = params.productProfile ? `\n\n${renderGroundedContext(params.productProfile)}` : '';
+      const narrativeBlueprintBlock = JSON.stringify(params.narrativeBlueprint.beats);
 
-      const prompt = this.promptEngine.render(PromptTask.VIDEO_JUDGE, { concept: params.concept, transcriptText, plannedOnScreenText, groundedContextBlock });
-      const result = await this.aiGateway.generateText(ctx, { prompt }, 'anthropic', PROMPT_VERSIONS.videoJudge);
+      const prompt = this.promptEngine.render(PromptTask.VIDEO_JUDGE, { concept: params.concept, transcriptText, plannedOnScreenText, groundedContextBlock, narrativeBlueprintBlock });
+      // Bug réel constaté en conditions réelles (2026-08-21, même classe que StoryboardGateService/
+      // CreativeGateService/NarrativeBlueprintService) : sans maxTokens explicite, ce call retombe
+      // sur le défaut 4000 de AnthropicProvider — un array de plusieurs critères texte, chacun avec
+      // score+justification+defect, risque réel de troncature JSON en sortie.
+      const result = await this.aiGateway.generateText(ctx, { prompt, maxTokens: 8000 }, 'anthropic', PROMPT_VERSIONS.videoJudge);
 
       const parsed = parseAiJson<any>(result.content);
       if (Array.isArray(parsed)) {

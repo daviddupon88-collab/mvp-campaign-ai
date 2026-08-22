@@ -1,6 +1,7 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { logProcessEvent, recordActivity, serializeError } from '../common/observability/process-health';
 import { CAMPAIGN_GENERATION_QUEUE } from './queue.module';
 import { AiOrchestratorService, GenerateCampaignParams } from '../ai/ai-orchestrator/ai-orchestrator.service';
 import { ModerationService, ModerationInputText, ModerationInputImage } from '../moderation/moderation.service';
@@ -14,10 +15,12 @@ import { VideoQualityLoopService, QualityLoopAttemptTrace, QualityLoopOutcome } 
 import { CreativeGenerationTraceService, ShotPlanVersion } from '../ai/video-judge/creative-generation-trace.service';
 import { buildQualityReport, computeTimeBudgetStatus, StructuredQualityReport } from '../ai/video-judge/quality-report';
 import { evaluateFinalDelivery } from '../ai/video-judge/final-delivery-gate';
-import { classifyRootCause, RootCauseLevel } from '../ai/video-judge/root-cause';
-import { StoryboardGateStatus } from '../ai/video-direction/storyboard-gate.types';
+import { classifyRootCause, projectToGoalFirstRootCause, RootCauseLevel } from '../ai/video-judge/root-cause';
+import { StoryboardGateStatus, StoryboardGateResult } from '../ai/video-direction/storyboard-gate.types';
 import { CreativeGateStatus } from '../ai/creative-intelligence/creative-gate.types';
 import { PlanLimitExceededException } from '../plans/plan-limit.exception';
+import { ProductFactConflict } from '../ai/product-intelligence/product-fact.types';
+import { ProductUrlFacts } from '../ai/product-intelligence/product-page/product-url-facts.types';
 
 // Worker : génère le contenu de la campagne, le PERSISTE dans le Content Studio (auparavant,
 // le contenu généré n'existait que le temps de la requête IA, jamais conservé au-delà —
@@ -57,9 +60,31 @@ export class CampaignGenerationProcessor extends WorkerHost {
     super();
   }
 
+  // Stabilisation infrastructure (Mission 4.5, 2026-08-22) — CAUSE PROBABLE identifiée de
+  // l'arrêt silencieux du backend : ce processeur n'avait AUCUN listener sur l'événement
+  // 'error' du Worker BullMQ sous-jacent (vérifié : aucun @OnWorkerEvent nulle part dans ce
+  // fichier avant ce correctif). Or bullmq.Worker émet 'error' pour des incidents SANS lien
+  // avec un job en cours (perte de connexion Redis, échec de renouvellement de lock, etc. —
+  // cf. node_modules/bullmq/dist/cjs/classes/worker.js, plusieurs this.emit('error', ...)) —
+  // en Node, un événement 'error' émis SANS AUCUN listener est levé comme une exception
+  // JAVASCRIPT NON INTERCEPTÉE (comportement spécial d'EventEmitter, pas une particularité de
+  // bullmq). Ce comportement correspond exactement à ce qui a été observé : un arrêt survenu
+  // PENDANT une période d'inactivité entre deux requêtes, sans aucune trace applicative — une
+  // erreur de fond du Worker (pas un job), jamais journalisée nulle part, faisait planter tout
+  // le process via le filet de sécurité uncaughtException (cf. main.ts). Non certain à 100 % en
+  // l'absence de la stack trace historique, mais c'est la seule cause structurelle identifiée
+  // avec preuve à l'appui dans le code — cf. rapport de la mission.
+  @OnWorkerEvent('error')
+  onWorkerError(error: unknown) {
+    logProcessEvent('bullmq_worker_error', { error: serializeError(error) });
+  }
+
   async process(job: Job<GenerateCampaignParams>) {
+    recordActivity('campaign_job_started', { campaignId: job.data.campaignId, organizationId: job.data.organizationId, jobId: job.id, attempt: job.attemptsMade + 1 });
     try {
-      return await this.processInternal(job);
+      const result = await this.processInternal(job);
+      recordActivity('campaign_job_completed', { campaignId: job.data.campaignId, jobId: job.id });
+      return result;
     } catch (error) {
       // Bug corrigé le 2026-08-18 (constaté en conditions réelles — campagnes dépassant 1h) :
       // un échec MÉTIER définitif (seuil qualité vidéo jamais atteint après réparations, crédits
@@ -86,6 +111,7 @@ export class CampaignGenerationProcessor extends WorkerHost {
       // explicitement l'utilisateur plutôt que de le laisser face à un état muet.
       const failureReason = this.toUserFacingFailureReason(error);
       this.logger.error(`Job ${job.id} (campagne ${job.data.campaignId}) définitivement en échec : ${error}`);
+      recordActivity('campaign_job_failed', { campaignId: job.data.campaignId, jobId: job.id, failureReason, error: serializeError(error) });
       await this.markCampaignFailed(job.data.organizationId, job.data.campaignId, failureReason);
       return { campaignStatus: 'FAILED', failureReason };
     }
@@ -99,7 +125,13 @@ export class CampaignGenerationProcessor extends WorkerHost {
     // toute la Quality Loop) : seul point de départ commun à tous les chemins de sortie.
     const startTime = Date.now();
 
-    const results = await this.orchestrator.generateCampaign(job.data);
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 7, Étape 19) — même job de queue pour
+    // les deux chemins : reuseApprovedConcept n'est présent que quand CampaignsService.regenerate()
+    // a déjà confirmé une réutilisation ciblée valide (cf. GenerateCampaignParams).
+    const { reuseApprovedConcept, ...campaignParams } = job.data;
+    const results = reuseApprovedConcept
+      ? await this.orchestrator.regenerateFromApprovedConcept({ ...campaignParams, ...reuseApprovedConcept })
+      : await this.orchestrator.generateCampaign(job.data);
 
     const { finalTranscript } = await this.persistGeneratedContent(organizationId, campaignId, results, startTime);
 
@@ -258,6 +290,15 @@ export class CampaignGenerationProcessor extends WorkerHost {
     if (/^QUALITY_GATE:.*n'a pas pu évaluer/.test(message)) {
       return "La vérification qualité de la vidéo finale n'a pas pu s'exécuter correctement (problème technique côté fournisseur IA, pas un problème de contenu). Réessayez, ou contactez le support si le problème persiste.";
     }
+    // Bug réel constaté en conditions réelles (2026-08-21) : PreFlightQualityGate (Mission 4.3
+    // Phase 5, Étape 7) bloque AVANT tout generateVideo — comme les 2 sous-cas Creative/Storyboard
+    // Gate ci-dessus, aucune vidéo n'a même été générée à ce stade. Ce cas ne matchait jusqu'ici
+    // aucun sous-cas et retombait sur le message générique post-vidéo suivant ("après plusieurs
+    // tentatives de correction"), factuellement faux ici — cette branche manquait depuis
+    // l'introduction du gate lui-même (Phase 5), pas un oubli de ce chantier-ci.
+    if (/^QUALITY_GATE:.*pré-vol qualité échoué/.test(message)) {
+      return "Le plan de tournage généré pour cette campagne présentait des incohérences internes (ex. narration/plan de tournage désynchronisés) détectées avant tout lancement de génération vidéo. Réessayez, ou contactez le support si le problème persiste.";
+    }
     if (/^QUALITY_GATE:/.test(message)) {
       return "La vidéo finale n'a pas atteint le seuil de qualité requis après plusieurs tentatives de correction. Réessayez, ou contactez le support si le problème persiste.";
     }
@@ -362,8 +403,17 @@ export class CampaignGenerationProcessor extends WorkerHost {
     let currentVideoClips = results.videoClips;
     let currentPerShotQuality = results.perShotQuality;
     let currentCreativeConcept = results.creativeConcept;
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 4) — mise à jour INCONDITIONNELLEMENT
+    // à chaque escalade réussie (STORYBOARD ou CONCEPT) : les deux retournent désormais un
+    // blueprint enrichi (beats[].shotIds reflétant le Shot Plan de CETTE tentative), même quand
+    // le concept/blueprint lui-même n'a pas changé (escalade STORYBOARD).
+    let currentNarrativeBlueprint = results.narrativeBlueprint;
     let currentCreativeGateStatus: CreativeGateStatus = results.creativeGateStatus;
     let currentStoryboardGateStatus: StoryboardGateStatus = results.storyboardGateStatus;
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 6b) — résultat COMPLET (criterionScores/
+    // blockingDefects/risks/requiredChanges/rootCauseLevel) du dernier Storyboard Gate franchi,
+    // persisté sur GoalFirstTrace même quand la campagne aboutit sans jamais escalader.
+    let currentPreProductionJudge: StoryboardGateResult = results.storyboardGateResult;
     let currentNarrationText = results.narrationText;
     let currentNarrationDataUri = results.narration!.content;
     let currentTranscript = results.transcript;
@@ -393,6 +443,7 @@ export class CampaignGenerationProcessor extends WorkerHost {
           visualDna: results.visualDnaResult,
           referenceImageUrl: results.referenceImageUrl,
           concept: currentCreativeConcept,
+          narrativeBlueprint: currentNarrativeBlueprint,
           productProfile: results.productProfile,
         },
         results.maxRepairAttempts,
@@ -417,6 +468,8 @@ export class CampaignGenerationProcessor extends WorkerHost {
           currentVideoClips = escalation.videoClips;
           currentPerShotQuality = escalation.perShotQuality;
           currentStoryboardGateStatus = escalation.storyboardGateStatus;
+          currentPreProductionJudge = escalation.storyboardGateResult;
+          currentNarrativeBlueprint = escalation.narrativeBlueprint;
           if (escalation.level === 'STORYBOARD') {
             storyboardEscalated = true;
             escalationLevel = 'STORYBOARD';
@@ -451,6 +504,7 @@ export class CampaignGenerationProcessor extends WorkerHost {
           totalCredits: await this.getTotalCreditsForCampaign(campaignId),
           elapsedMs,
           rootCause,
+          goalFirstRootCause: rootCause ? projectToGoalFirstRootCause(rootCause) : null,
           escalationLevel,
           stopReason: 'REPAIR_EXHAUSTED — budget de réparation/escalade épuisé sans atteindre le seuil de qualité',
           timeBudgetStatus: computeTimeBudgetStatus(elapsedMs),
@@ -466,6 +520,11 @@ export class CampaignGenerationProcessor extends WorkerHost {
           shotPlanVersions,
           attempts: outcome.attempts,
           costEstimate: { checkpointA: results.checkpointACost, checkpointBFinalMaxRepairAttempts: results.maxRepairAttempts },
+          qualityTarget: results.qualityTarget,
+          preProductionJudge: currentPreProductionJudge,
+          productUrl: results.productProfile?.productUrl,
+          productUrlFacts: results.productProfile?.productUrlFacts as unknown as ProductUrlFacts | null,
+          productConflicts: results.productProfile?.productConflicts as unknown as ProductFactConflict[] | undefined,
           finalOutcome: 'REPAIR_EXHAUSTED',
           report: enrichedReport,
           elapsedMs,
@@ -509,6 +568,11 @@ export class CampaignGenerationProcessor extends WorkerHost {
           shotPlanVersions,
           attempts,
           costEstimate: { checkpointA: results.checkpointACost, checkpointBFinalMaxRepairAttempts: results.maxRepairAttempts },
+          qualityTarget: results.qualityTarget,
+          preProductionJudge: currentPreProductionJudge,
+          productUrl: results.productProfile?.productUrl,
+          productUrlFacts: results.productProfile?.productUrlFacts as unknown as ProductUrlFacts | null,
+          productConflicts: results.productProfile?.productConflicts as unknown as ProductFactConflict[] | undefined,
           finalOutcome: 'SKIPPED_NO_VIDEO',
           report: {
             ...buildQualityReport(outcome),
@@ -517,6 +581,7 @@ export class CampaignGenerationProcessor extends WorkerHost {
             totalCredits: await this.getTotalCreditsForCampaign(campaignId),
             elapsedMs: elapsedMsSkipped,
             rootCause: null,
+            goalFirstRootCause: null,
             escalationLevel,
             stopReason: 'SKIPPED_NO_VIDEO — assemblage final ignoré (mode mock/narration indisponible)',
             timeBudgetStatus: computeTimeBudgetStatus(elapsedMsSkipped),
@@ -554,6 +619,11 @@ export class CampaignGenerationProcessor extends WorkerHost {
         shotPlanVersions,
         attempts,
         costEstimate: { checkpointA: results.checkpointACost, checkpointBFinalMaxRepairAttempts: results.maxRepairAttempts },
+        qualityTarget: results.qualityTarget,
+        preProductionJudge: currentPreProductionJudge,
+        productUrl: results.productProfile?.productUrl,
+        productUrlFacts: results.productProfile?.productUrlFacts as unknown as ProductUrlFacts | null,
+        productConflicts: results.productProfile?.productConflicts as unknown as ProductFactConflict[] | undefined,
         finalOutcome: 'PASSED',
         report: {
           ...buildQualityReport(outcome),
@@ -562,6 +632,7 @@ export class CampaignGenerationProcessor extends WorkerHost {
           totalCredits: await this.getTotalCreditsForCampaign(campaignId),
           elapsedMs: elapsedMsPassed,
           rootCause: null,
+          goalFirstRootCause: null,
           escalationLevel,
           stopReason: 'PASSED',
           timeBudgetStatus: computeTimeBudgetStatus(elapsedMsPassed),
@@ -589,13 +660,11 @@ export class CampaignGenerationProcessor extends WorkerHost {
         plannedShotCount: currentShotPlan.length,
         deliveredShotCount: currentVideoClips.length,
       });
+      // Mission 4.3 (Étape 14/18, tolérance zéro) — delivery.partialDelivery n'est plus jamais
+      // acceptée séparément : evaluateFinalDelivery l'inclut désormais TOUJOURS dans
+      // blockingReasons quand elle est vraie, donc le throw ci-dessus la couvre déjà.
       if (!delivery.deliverable) {
         throw new Error(`QUALITY_GATE: livraison finale refusée malgré un Video Judge PASS (${delivery.blockingReasons.join('; ')}).`);
-      }
-      if (delivery.partialDelivery) {
-        this.logger.warn(
-          `Campagne ${campaignId} : livraison PARTIELLE acceptée — ${currentVideoClips.length}/${currentShotPlan.length} plan(s) prévu(s) réellement livré(s) (gates normaux franchis malgré tout, cf. audit forensique Mission 4.2 P0-4).`,
-        );
       }
 
       return { asset, finalTranscript: outcome.transcript };
@@ -630,6 +699,14 @@ export class CampaignGenerationProcessor extends WorkerHost {
           videoClips: Awaited<ReturnType<AiOrchestratorService['generateCampaign']>>['videoClips'];
           perShotQuality: Awaited<ReturnType<AiOrchestratorService['generateCampaign']>>['perShotQuality'];
           storyboardGateStatus: StoryboardGateStatus;
+          // Mission 4.3 (Goal-First Quality Architecture, Phase 6b) — toujours présent, même
+          // raisonnement que narrativeBlueprint ci-dessous : les deux branches STORYBOARD/CONCEPT
+          // le retournent désormais systématiquement.
+          storyboardGateResult: StoryboardGateResult;
+          // Mission 4.3 (Goal-First Quality Architecture, Phase 4) — toujours présent (les deux
+          // branches STORYBOARD/CONCEPT de regenerateShotPlanAndVideo/
+          // regenerateConceptStoryboardAndVideo le retournent désormais systématiquement, enrichi).
+          narrativeBlueprint: Awaited<ReturnType<AiOrchestratorService['generateCampaign']>>['narrativeBlueprint'];
           creativeConcept?: Awaited<ReturnType<AiOrchestratorService['generateCampaign']>>['creativeConcept'];
           creativeGateStatus?: CreativeGateStatus;
           narrationText?: string;
@@ -690,9 +767,11 @@ export class CampaignGenerationProcessor extends WorkerHost {
         referenceImageUrl: results.referenceImageUrl,
         effectiveParams: results.effectiveParams,
         strategy: results.strategy.content,
-        narrationText: results.narrationText,
+        narrativeBlueprint: results.narrativeBlueprint,
         organizationId,
         escalationFeedback,
+        qualityTarget: results.qualityTarget,
+        productProfile: results.productProfile,
       });
       return { rootCause, result: { level: 'STORYBOARD', ...escalation } };
     }
@@ -707,6 +786,7 @@ export class CampaignGenerationProcessor extends WorkerHost {
         organizationId,
         productProfile: results.productProfile,
         escalationFeedback,
+        qualityTarget: results.qualityTarget,
       });
       return { rootCause, result: { level: 'CONCEPT', ...escalation } };
     }

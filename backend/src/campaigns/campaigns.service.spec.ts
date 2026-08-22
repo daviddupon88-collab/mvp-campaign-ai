@@ -5,11 +5,14 @@ import { EntitlementsService } from '../plans/entitlements.service';
 import { CampaignTemplatesService } from '../campaign-templates/campaign-templates.service';
 import { CreativeVariationService } from '../ai/creative-intelligence/creative-variation.service';
 
-function buildService(overrides?: { campaignFindFirst?: any; assetFindFirst?: any }) {
+function buildService(overrides?: { campaignFindFirst?: any; assetFindFirst?: any; creativeGenerationTraceFindUnique?: any }) {
   const campaignCreate = jest.fn().mockResolvedValue({ id: 'campaign-1' });
   const campaignUpdate = jest.fn().mockResolvedValue({});
   const assetFindFirst = jest.fn().mockResolvedValue(overrides?.assetFindFirst);
   const contentPieceUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 7) — undefined par défaut (aucune trace),
+  // même discipline que assetFindFirst : les tests qui n'en ont pas besoin n'ont rien à fournir.
+  const creativeGenerationTraceFindUnique = jest.fn().mockResolvedValue(overrides?.creativeGenerationTraceFindUnique);
   const prisma = {
     campaign: {
       create: campaignCreate,
@@ -21,6 +24,9 @@ function buildService(overrides?: { campaignFindFirst?: any; assetFindFirst?: an
     },
     contentPiece: {
       updateMany: contentPieceUpdateMany,
+    },
+    creativeGenerationTrace: {
+      findUnique: creativeGenerationTraceFindUnique,
     },
   } as unknown as PrismaService;
 
@@ -39,7 +45,7 @@ function buildService(overrides?: { campaignFindFirst?: any; assetFindFirst?: an
   const creativeVariation = {} as unknown as CreativeVariationService;
 
   const service = new CampaignsService(prisma, queue, templatesService, entitlements, creativeVariation);
-  return { service, prisma, queue, entitlements, assertChannelsAllowed, campaignCreate, campaignUpdate, assetFindFirst, contentPieceUpdateMany };
+  return { service, prisma, queue, entitlements, assertChannelsAllowed, campaignCreate, campaignUpdate, assetFindFirst, contentPieceUpdateMany, creativeGenerationTraceFindUnique };
 }
 
 // Vérifie la correction du gap identifié dans le README (item 55) : la restriction de
@@ -260,5 +266,101 @@ describe('CampaignsService — relance après échec de génération (FAILED)', 
     } as any);
 
     expect(queue.add).toHaveBeenCalledWith('generate', expect.objectContaining({ productDescription: 'Nouvelle description' }));
+  });
+});
+
+// Mission 4.3 (Goal-First Quality Architecture, Phase 7, Étape 19) — réutilisation ciblée du
+// concept publicitaire déjà approuvé : regenerate() ne doit reconstruire Creative
+// Intelligence/Creative Concept/Creative Gate QUE si une entrée a réellement changé, ou si aucune
+// trace exploitable n'existe.
+describe('CampaignsService — Phase 7 : réutilisation ciblée du concept à la régénération', () => {
+  const UNCHANGED_CAMPAIGN = { id: 'campaign-1', status: 'FAILED', channels: ['instagram'], productDescription: 'Chaussures de running', objective: 'Vendre plus' };
+  const UNCHANGED_DTO = { name: 'Campagne', productDescription: 'Chaussures de running', objective: 'Vendre plus', channels: ['instagram'] };
+  const TRACE = {
+    creativeIntelligence: { primaryBenefit: 'confort', cta: 'Achetez' },
+    creativeConcept: { title: 't', hook: 'h', cta: 'Achetez maintenant' },
+    qualityTarget: { targetScore: 80, version: 'test-v1', criticalCriteria: [], minimumCriticalScore: 60, prohibitedConditions: [] },
+  };
+
+  it('entrées identiques + trace existante : reuseApprovedConcept est transmis au job, avec creativeIntelligence/creativeConcept/qualityTarget de la trace', async () => {
+    const { service, queue } = buildService({ campaignFindFirst: UNCHANGED_CAMPAIGN, creativeGenerationTraceFindUnique: TRACE });
+
+    await service.regenerate('org-1', 'campaign-1', UNCHANGED_DTO as any);
+
+    expect(queue.add).toHaveBeenCalledWith('generate', expect.objectContaining({ reuseApprovedConcept: TRACE }));
+  });
+
+  it('entrées identiques mais AUCUNE trace : reuseApprovedConcept absent du job (rien à réutiliser)', async () => {
+    const { service, queue, creativeGenerationTraceFindUnique } = buildService({ campaignFindFirst: UNCHANGED_CAMPAIGN, creativeGenerationTraceFindUnique: undefined });
+
+    await service.regenerate('org-1', 'campaign-1', UNCHANGED_DTO as any);
+
+    expect(creativeGenerationTraceFindUnique).toHaveBeenCalledWith({ where: { campaignId: 'campaign-1' } });
+    const [, payload] = (queue.add as jest.Mock).mock.calls[0];
+    expect(payload.reuseApprovedConcept).toBeUndefined();
+  });
+
+  it('nouvelle photo fournie : reuseApprovedConcept absent, même si une trace existe (ne consulte même pas la trace)', async () => {
+    const { service, queue, creativeGenerationTraceFindUnique } = buildService({
+      campaignFindFirst: UNCHANGED_CAMPAIGN,
+      creativeGenerationTraceFindUnique: TRACE,
+      assetFindFirst: { id: 'asset-1', organizationId: 'org-1', type: 'IMAGE', url: 'https://storage.example.com/nouvelle.png' },
+    });
+
+    await service.regenerate('org-1', 'campaign-1', { ...UNCHANGED_DTO, productImageAssetId: 'asset-1' } as any);
+
+    expect(creativeGenerationTraceFindUnique).not.toHaveBeenCalled();
+    const [, payload] = (queue.add as jest.Mock).mock.calls[0];
+    expect(payload.reuseApprovedConcept).toBeUndefined();
+  });
+
+  it('description modifiée : reuseApprovedConcept absent', async () => {
+    const { service, queue } = buildService({ campaignFindFirst: UNCHANGED_CAMPAIGN, creativeGenerationTraceFindUnique: TRACE });
+
+    await service.regenerate('org-1', 'campaign-1', { ...UNCHANGED_DTO, productDescription: 'Chaussures de trail' } as any);
+
+    const [, payload] = (queue.add as jest.Mock).mock.calls[0];
+    expect(payload.reuseApprovedConcept).toBeUndefined();
+  });
+
+  it('objectif modifié : reuseApprovedConcept absent', async () => {
+    const { service, queue } = buildService({ campaignFindFirst: UNCHANGED_CAMPAIGN, creativeGenerationTraceFindUnique: TRACE });
+
+    await service.regenerate('org-1', 'campaign-1', { ...UNCHANGED_DTO, objective: 'Fidéliser' } as any);
+
+    const [, payload] = (queue.add as jest.Mock).mock.calls[0];
+    expect(payload.reuseApprovedConcept).toBeUndefined();
+  });
+
+  it('canaux modifiés (nouvel ensemble) : reuseApprovedConcept absent', async () => {
+    const { service, queue } = buildService({ campaignFindFirst: UNCHANGED_CAMPAIGN, creativeGenerationTraceFindUnique: TRACE });
+
+    await service.regenerate('org-1', 'campaign-1', { ...UNCHANGED_DTO, channels: ['tiktok'] } as any);
+
+    const [, payload] = (queue.add as jest.Mock).mock.calls[0];
+    expect(payload.reuseApprovedConcept).toBeUndefined();
+  });
+
+  it('canaux omis dans le DTO (repli sur ceux déjà enregistrés) : ne bloque PAS la réutilisation', async () => {
+    const { service, queue } = buildService({
+      campaignFindFirst: UNCHANGED_CAMPAIGN,
+      creativeGenerationTraceFindUnique: TRACE,
+    });
+
+    await service.regenerate('org-1', 'campaign-1', { name: 'Campagne', productDescription: 'Chaussures de running', objective: 'Vendre plus' } as any);
+
+    expect(queue.add).toHaveBeenCalledWith('generate', expect.objectContaining({ reuseApprovedConcept: TRACE }));
+  });
+
+  it('trace sans qualityTarget persisté (trace antérieure au chantier) : repli sur QUALITY_TARGET_V1', async () => {
+    const { service, queue } = buildService({
+      campaignFindFirst: UNCHANGED_CAMPAIGN,
+      creativeGenerationTraceFindUnique: { creativeIntelligence: TRACE.creativeIntelligence, creativeConcept: TRACE.creativeConcept, qualityTarget: null },
+    });
+
+    await service.regenerate('org-1', 'campaign-1', UNCHANGED_DTO as any);
+
+    const [, payload] = (queue.add as jest.Mock).mock.calls[0];
+    expect(payload.reuseApprovedConcept.qualityTarget.targetScore).toBe(75);
   });
 });

@@ -1,7 +1,9 @@
-import { VideoDirectorService, DEFAULT_SHOT_PLAN, Shot, GenerateShotPlanParams } from './video-director.service';
+import { VideoDirectorService, DEFAULT_SHOT_PLAN, Shot, GenerateShotPlanParams, linkBeatsToShots } from './video-director.service';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { VisualDna } from './visual-dna.service';
 import { CreativeConcept } from '../creative-intelligence/creative-concept.types';
+import { NarrativeBeat, NarrativeBlueprint } from '../creative-intelligence/narrative-blueprint.types';
+import { ShotExecutionContext } from './shot-execution-compiler';
 
 function buildGatewayMock(generateTextContent: string) {
   return {
@@ -34,9 +36,31 @@ function buildConcept(scenesCount: number): CreativeConcept {
   return {
     title: 't', concept: 'c', coreMessage: 'm', hook: 'h', emotionalDirection: 'e', visualDirection: 'v',
     storytellingApproach: 's', proofStrategy: 'p', cta: 'cta', targetAudience: 'a', duration: 15, format: '9:16',
-    scenesCount, raw: '{}',
+    scenesCount, qualityAlignment: '', raw: '{}',
   };
 }
+
+const BLUEPRINT: NarrativeBlueprint = {
+  hook: 'Hook narratif', problem: 'Problème', tension: 'Tension', reveal: 'Révélation',
+  productIntroduction: 'Introduction produit', benefit: 'Bénéfice', proof: 'Preuve', emotionalPayoff: 'Émotion',
+  cta: 'CTA narratif', pacing: 'rapide', pausePoints: [], beats: [], raw: '{}',
+};
+
+// Mission 4.3 (Goal-First Quality Architecture, Phase 4) — context NEUTRE (concept/blueprint aux
+// champs vides) pour serializeShotToPrompt/repairShotPrompt : ce describe teste le gabarit
+// littéral relocalisé dans ShotExecutionCompiler (non-régression), pas les niveaux additionnels
+// (déjà couverts par shot-execution-compiler.spec.ts) — un context non-neutre ajouterait des
+// lignes supplémentaires et casserait les assertions .toBe() ci-dessous.
+const NEUTRAL_CONCEPT: CreativeConcept = {
+  title: '', concept: '', coreMessage: '', hook: '', emotionalDirection: '', visualDirection: '',
+  storytellingApproach: '', proofStrategy: '', cta: '', targetAudience: '', duration: 15, format: '9:16',
+  scenesCount: 3, qualityAlignment: '', raw: '{}',
+};
+const NEUTRAL_BLUEPRINT: NarrativeBlueprint = {
+  hook: '', problem: '', tension: '', reveal: '', productIntroduction: '',
+  benefit: '', proof: '', emotionalPayoff: '', cta: '', pacing: '', pausePoints: [], beats: [], raw: '{}',
+};
+const CONTEXT: ShotExecutionContext = { creativeConcept: NEUTRAL_CONCEPT, narrativeBlueprint: NEUTRAL_BLUEPRINT };
 
 function buildParams(overrides: Partial<GenerateShotPlanParams> = {}): GenerateShotPlanParams {
   return {
@@ -45,6 +69,7 @@ function buildParams(overrides: Partial<GenerateShotPlanParams> = {}): GenerateS
     objective: 'Attirer des clients B2B',
     campaignContext: 'y',
     creativeConcept: buildConcept(3),
+    narrativeBlueprint: BLUEPRINT,
     ...overrides,
   };
 }
@@ -211,8 +236,91 @@ describe('VideoDirectorService.generateShotPlan', () => {
     const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
     expect(params.prompt).toContain('évite 3 plans en close-up statique');
   });
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — narrationHint (texte plat) remplacé
+  // par narrativeBlueprint (structure complète) : le prompt doit refléter les champs du blueprint.
+  it('la structure narrative du prompt reflète les champs du NarrativeBlueprint, pas un simple texte plat', async () => {
+    const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
+    const service = new VideoDirectorService(gateway);
+
+    await service.generateShotPlan(CTX, buildParams());
+
+    const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(params.prompt).toContain('Hook narratif');
+    expect(params.prompt).toContain('CTA narratif');
+    expect(params.prompt).toContain('rapide');
+  });
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 5) — le prompt liste les beats
+  // disponibles et demande explicitement narrativeBeatId, pour que ShotExecutionCompiler puisse
+  // ensuite relier chaque plan à la preuve visuelle attendue par son beat.
+  it('les beats du NarrativeBlueprint sont listés et narrativeBeatId est demandé au modèle', async () => {
+    const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
+    const service = new VideoDirectorService(gateway);
+    const blueprintWithBeats: NarrativeBlueprint = {
+      ...BLUEPRINT,
+      beats: [{ id: 'beat-1', role: 'hook', objective: 'accrocher', duration: 3, requiredVisualEvidence: 'chantier plongé dans le noir', requiredVoiceover: '', shotIds: [] }],
+    };
+
+    await service.generateShotPlan(CTX, buildParams({ narrativeBlueprint: blueprintWithBeats }));
+
+    const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(params.prompt).toContain('beat-1');
+    expect(params.prompt).toContain('chantier plongé dans le noir');
+    expect(params.prompt).toContain('narrativeBeatId');
+  });
+
+  it('aucun beat dans le NarrativeBlueprint (repli neutre) : aucun bloc de beats listés dans le prompt (seule l\'instruction générale sur narrativeBeatId reste)', async () => {
+    const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
+    const service = new VideoDirectorService(gateway);
+
+    await service.generateShotPlan(CTX, buildParams());
+
+    const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(params.prompt).not.toContain('Beats narratifs disponibles (rattache');
+  });
+
+  // Audit forensic (2026-08-22, 2 campagnes réelles a4a1... et 208b515c...) : le Storyboard Gate a
+  // rejeté deux Shot Plans distincts pour la MÊME raison structurelle — une preuve/affirmation
+  // portée uniquement par la voix-off, jamais visuellement démontrée par le plan lui-même (ex.
+  // "packaging reste sec" alors que la VO affirme "plongé dans le produit"), et un élément
+  // distinctif confirmé de l'ADN visuel absent de tous les plans. Contraintes ajoutées en v3 pour
+  // fixer la génération à la source plutôt que de compter sur le Storyboard Gate pour rattraper
+  // après coup à chaque tentative.
+  it('demande explicitement l\'alignement visuel/verbal, la fidélité au beat rattaché, et la complétude de l\'ADN visuel', async () => {
+    const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
+    const service = new VideoDirectorService(gateway);
+
+    await service.generateShotPlan(CTX, buildParams());
+
+    const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(params.prompt).toContain('DOIT être visuellement démontrée');
+    expect(params.prompt).toContain('doit représenter concrètement la preuve visuelle attendue par ce beat');
+    expect(params.prompt).toContain('distinctiveFeatures');
+    expect(params.prompt).toContain('AU MOINS un plan');
+  });
+
+  // Audit forensic (2026-08-22) — dernier maillon de la chaîne proofToShow (CreativeIntelligence)
+  // -> proofStrategy (Concept) -> requiredVisualEvidence (NarrativeBlueprint) -> proofElement
+  // (Shot Plan) : seul proofElement n'avait jusqu'ici aucune consigne SHOW > TELL propre dans le
+  // prompt (juste un nom de champ dans le schéma JSON).
+  it('demande explicitement la règle SHOW > TELL pour proofElement', async () => {
+    const gateway = buildGatewayMock(JSON.stringify([SHOT, SHOT, SHOT]));
+    const service = new VideoDirectorService(gateway);
+
+    await service.generateShotPlan(CTX, buildParams());
+
+    const [, params] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(params.prompt).toContain('"proofElement" (règle SHOW > TELL');
+    expect(params.prompt).toContain('n\'invente jamais une preuve non filmable');
+  });
 });
 
+// Mission 4.3 (Goal-First Quality Architecture, Phase 4) — délègue désormais à
+// ShotExecutionCompiler.compileShotExecutionInstruction (shot-execution-compiler.ts). Ce describe
+// vérifie uniquement la DÉLÉGATION (le gabarit littéral historique reste identique via un context
+// neutre) — la couverture exhaustive des niveaux PRIMARY/SUPPORTING/CONTINUITY/NEGATIVE vit dans
+// shot-execution-compiler.spec.ts, jamais dupliquée ici.
 describe('VideoDirectorService.serializeShotToPrompt', () => {
   const service = new VideoDirectorService({} as AiGatewayService);
 
@@ -224,7 +332,7 @@ describe('VideoDirectorService.serializeShotToPrompt', () => {
       motion: 'the product rotates slowly',
       lighting: 'a moving highlight sweeps across the product',
       background: 'subtle floating particles move through the scene',
-    });
+    }, CONTEXT);
 
     expect(prompt).toBe(
       `Create a dynamic premium product commercial.
@@ -234,7 +342,9 @@ Motion: the product rotates slowly
 Environment: subtle floating particles move through the scene
 Lighting: a moving highlight sweeps across the product
 The movement must remain continuous throughout the entire shot.
-Avoid a static camera and avoid a still-image effect.`,
+Avoid a static camera and avoid a still-image effect.
+Avoid any static or frozen frame — motion must be continuous throughout.
+Never render on-screen text, logos, or brand marks that are not present in the reference image.`,
     );
   });
 
@@ -246,20 +356,20 @@ Avoid a static camera and avoid a still-image effect.`,
       motion: 'slight push-in',
       lighting: 'a focused highlight on the logo',
       background: 'softly blurred product surface',
-    });
+    }, CONTEXT);
 
     expect(prompt).toContain('Camera: close-up focused on the logo');
   });
 
   it('subject "product" (la valeur par défaut) ne modifie pas la ligne Camera', () => {
-    const prompt = service.serializeShotToPrompt(SHOT);
+    const prompt = service.serializeShotToPrompt(SHOT, CONTEXT);
     expect(prompt).toContain('Camera: dolly-in\n');
   });
 
   // Chantier Storyboard (2026-08-18) : ligne additive, jamais au prix du gabarit littéral figé.
   it('narrativeRole renseigné : ajoute une ligne de contexte narratif en tête, gabarit des 7 lignes inchangé', () => {
-    const prompt = service.serializeShotToPrompt({ ...SHOT, narrativeRole: 'hook' });
-    expect(prompt).toBe(
+    const prompt = service.serializeShotToPrompt({ ...SHOT, narrativeRole: 'hook' }, CONTEXT);
+    expect(prompt.startsWith(
       `This shot is the "hook" beat of the commercial.
 Create a dynamic premium product commercial.
 The product remains visually identical to the reference image.
@@ -269,11 +379,11 @@ Environment: particles
 Lighting: moving highlight
 The movement must remain continuous throughout the entire shot.
 Avoid a static camera and avoid a still-image effect.`,
-    );
+    )).toBe(true);
   });
 
   it('narrativeRole absent : sortie strictement identique à avant ce chantier (non-régression)', () => {
-    const prompt = service.serializeShotToPrompt(SHOT);
+    const prompt = service.serializeShotToPrompt(SHOT, CONTEXT);
     expect(prompt.startsWith('Create a dynamic premium product commercial.')).toBe(true);
     expect(prompt).not.toContain('beat of the commercial');
   });
@@ -285,9 +395,9 @@ Avoid a static camera and avoid a still-image effect.`,
         action: 'the hand reaches for the bottle and lifts it',
         cameraMovement: 'slow dolly-in with a slight tilt up',
         productBenefit: 'shows the leak-proof cap under pressure',
-      });
+      }, CONTEXT);
 
-      expect(prompt).toBe(
+      expect(prompt.startsWith(
         `Create a dynamic premium product commercial.
 The product remains visually identical to the reference image.
 Camera: dolly-in
@@ -299,18 +409,18 @@ Camera movement: slow dolly-in with a slight tilt up
 What this shot must convey: shows the leak-proof cap under pressure
 The movement must remain continuous throughout the entire shot.
 Avoid a static camera and avoid a still-image effect.`,
-      );
+      )).toBe(true);
     });
 
     it('aucun des 3 champs renseigné : aucune ligne ajoutée, gabarit strictement identique (non-régression)', () => {
-      const prompt = service.serializeShotToPrompt(SHOT);
+      const prompt = service.serializeShotToPrompt(SHOT, CONTEXT);
       expect(prompt).not.toContain('Action:');
       expect(prompt).not.toContain('Camera movement:');
       expect(prompt).not.toContain('What this shot must convey:');
     });
 
     it('un seul des 3 champs renseigné (action) : une seule ligne ajoutée', () => {
-      const prompt = service.serializeShotToPrompt({ ...SHOT, action: 'the cap lights up' });
+      const prompt = service.serializeShotToPrompt({ ...SHOT, action: 'the cap lights up' }, CONTEXT);
       expect(prompt).toContain('Action: the cap lights up');
       expect(prompt).not.toContain('Camera movement:');
       expect(prompt).not.toContain('What this shot must convey:');
@@ -329,11 +439,11 @@ describe('VideoDirectorService.repairShotPrompt', () => {
       motionQuality: { passed: false, score: 20, reasons: ['quasi-statique'], freezeRatio: 0.5 },
       visualFidelity: { ...PASSING },
       reasons: ['quasi-statique'],
-    });
+    }, CONTEXT);
 
     expect(prompt).toContain('too static');
     expect(prompt).not.toContain('did not accurately match');
-    expect(prompt.startsWith(service.serializeShotToPrompt(SHOT))).toBe(true); // base inchangée, instructions ajoutées à la suite
+    expect(prompt.startsWith(service.serializeShotToPrompt(SHOT, CONTEXT))).toBe(true); // base inchangée, instructions ajoutées à la suite
   });
 
   it('échec fidélité seul : ajoute une instruction de fidélité incluant les raisons précises, pas de mouvement', () => {
@@ -343,7 +453,7 @@ describe('VideoDirectorService.repairShotPrompt', () => {
       motionQuality: { ...PASSING, freezeRatio: 0 },
       visualFidelity: { passed: false, score: 30, reasons: ['couleur incorrecte', 'logo absent'] },
       reasons: ['couleur incorrecte', 'logo absent'],
-    });
+    }, CONTEXT);
 
     expect(prompt).toContain('did not accurately match');
     expect(prompt).toContain('couleur incorrecte');
@@ -358,7 +468,7 @@ describe('VideoDirectorService.repairShotPrompt', () => {
       motionQuality: { passed: false, score: 10, reasons: ['quasi-statique'], freezeRatio: 0.8 },
       visualFidelity: { passed: false, score: 20, reasons: ['produit différent'] },
       reasons: ['quasi-statique', 'produit différent'],
-    });
+    }, CONTEXT);
 
     expect(prompt).toContain('too static');
     expect(prompt).toContain('did not accurately match');
@@ -370,6 +480,7 @@ describe('VideoDirectorService.repairShotPrompt', () => {
     const prompt = service.repairShotPrompt(
       SHOT,
       { passed: true, qualityScore: 90, motionQuality: { ...PASSING, freezeRatio: 0 }, visualFidelity: { ...PASSING }, reasons: [] },
+      CONTEXT,
       { type: 'transition', description: 'le plan suivant démarre sur un angle opposé' },
     );
 
@@ -383,6 +494,7 @@ describe('VideoDirectorService.repairShotPrompt', () => {
     const prompt = service.repairShotPrompt(
       SHOT,
       { passed: false, qualityScore: 40, motionQuality: { passed: false, score: 20, reasons: ['quasi-statique'], freezeRatio: 0.5 }, visualFidelity: { ...PASSING }, reasons: ['quasi-statique'] },
+      CONTEXT,
       undefined,
       { priorFailureReason: 'toujours trop statique' },
     );
@@ -402,7 +514,53 @@ describe('VideoDirectorService.repairShotPrompt', () => {
         motionQuality: { passed: false, score: 20, reasons: [], freezeRatio: 0.5 },
         visualFidelity: { ...PASSING },
         reasons: [],
-      }),
+      }, CONTEXT),
     ).not.toThrow();
+  });
+});
+
+// Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 5).
+describe('linkBeatsToShots', () => {
+  const BEAT_A: NarrativeBeat = { id: 'beat-1', role: 'hook', objective: 'accrocher', duration: 3, requiredVisualEvidence: 'chantier sombre', requiredVoiceover: '', shotIds: [] };
+  const BEAT_B: NarrativeBeat = { id: 'beat-2', role: 'proof', objective: 'démontrer', duration: 4, requiredVisualEvidence: 'bandes réfléchissantes', requiredVoiceover: '', shotIds: [] };
+
+  it('regroupe les shots par narrativeBeatId, dans l\'ordre du Shot Plan', () => {
+    const shotPlan: Shot[] = [
+      { ...SHOT, sceneId: 'shot-1', narrativeBeatId: 'beat-1' },
+      { ...SHOT, sceneId: 'shot-2', narrativeBeatId: 'beat-2' },
+      { ...SHOT, sceneId: 'shot-3', narrativeBeatId: 'beat-1' },
+    ];
+    const blueprint: NarrativeBlueprint = { ...BLUEPRINT, beats: [BEAT_A, BEAT_B] };
+
+    const result = linkBeatsToShots(shotPlan, blueprint);
+
+    expect(result.beats.find((b) => b.id === 'beat-1')!.shotIds).toEqual(['shot-1', 'shot-3']);
+    expect(result.beats.find((b) => b.id === 'beat-2')!.shotIds).toEqual(['shot-2']);
+  });
+
+  it('aucun shot ne référence un beat donné : shotIds reste [] pour ce beat, jamais une erreur', () => {
+    const shotPlan: Shot[] = [{ ...SHOT, sceneId: 'shot-1', narrativeBeatId: 'beat-1' }];
+    const blueprint: NarrativeBlueprint = { ...BLUEPRINT, beats: [BEAT_A, BEAT_B] };
+
+    const result = linkBeatsToShots(shotPlan, blueprint);
+
+    expect(result.beats.find((b) => b.id === 'beat-2')!.shotIds).toEqual([]);
+  });
+
+  it('un shot référence un narrativeBeatId inconnu du blueprint : ignoré silencieusement, jamais une erreur', () => {
+    const shotPlan: Shot[] = [{ ...SHOT, sceneId: 'shot-1', narrativeBeatId: 'beat-inconnu' }];
+    const blueprint: NarrativeBlueprint = { ...BLUEPRINT, beats: [BEAT_A] };
+
+    expect(() => linkBeatsToShots(shotPlan, blueprint)).not.toThrow();
+    expect(linkBeatsToShots(shotPlan, blueprint).beats[0].shotIds).toEqual([]);
+  });
+
+  it('aucun shot ne porte de narrativeBeatId : tous les beats gardent shotIds: []', () => {
+    const shotPlan: Shot[] = [{ ...SHOT, sceneId: 'shot-1' }];
+    const blueprint: NarrativeBlueprint = { ...BLUEPRINT, beats: [BEAT_A] };
+
+    const result = linkBeatsToShots(shotPlan, blueprint);
+
+    expect(result.beats[0].shotIds).toEqual([]);
   });
 });

@@ -27,7 +27,12 @@ export class CreativeVariationService {
   async generateVariations(ctx: AiCallContext, acceptedConcept: CreativeConcept, count = DEFAULT_VARIATIONS): Promise<CreativeConcept[]> {
     const clampedCount = Math.min(MAX_VARIATIONS, Math.max(MIN_VARIATIONS, count));
     const prompt = this.promptEngine.render(PromptTask.CREATIVE_VARIATION, { acceptedConcept, count: clampedCount });
-    const result = await this.aiGateway.generateText(ctx, { prompt }, 'anthropic', PROMPT_VERSIONS.creativeVariation);
+    // Bug réel constaté en conditions réelles (2026-08-21, même classe que StoryboardGateService/
+    // CreativeGateService/NarrativeBlueprintService/VideoJudgeService/CreativeConceptService/
+    // CreativeIntelligenceService) : sans maxTokens explicite, ce call retombe sur le défaut 4000
+    // de AnthropicProvider — jusqu'à 3 concepts complets (14 champs chacun), risque réel élevé de
+    // troncature JSON en sortie.
+    const result = await this.aiGateway.generateText(ctx, { prompt, maxTokens: 8000 }, 'anthropic', PROMPT_VERSIONS.creativeVariation);
     return this.parse(result.content, acceptedConcept);
   }
 

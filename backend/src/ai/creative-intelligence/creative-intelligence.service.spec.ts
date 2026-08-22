@@ -105,6 +105,19 @@ describe('CreativeIntelligenceService.generate', () => {
     expect(promptVersion).toBe('creative-brief-v1');
   });
 
+  // Bug réel constaté en conditions réelles (2026-08-21) : sans maxTokens explicite, ce call
+  // retombait sur le défaut 4000 de AnthropicProvider — schéma à 16 champs texte, risque réel de
+  // troncature JSON en sortie.
+  it('demande un budget de tokens généreux (8000), pas le défaut 4000 — évite la troncature JSON', async () => {
+    const gateway = buildGatewayMock(JSON.stringify({ adObjective: 'x' }));
+    const service = new CreativeIntelligenceService(gateway, promptEngine);
+
+    await service.generate({ organizationId: 'org-1', campaignId: 'camp-1', purpose: 'campaign_generation' }, { ...BASE_PARAMS, productProfile: null });
+
+    const [, requestParams] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(requestParams.maxTokens).toBe(8000);
+  });
+
   it("échec total du provider : l'erreur remonte, ne masque jamais une vraie panne", async () => {
     const gateway = { generateText: jest.fn().mockRejectedValue(new Error('tous les fournisseurs ont échoué')) } as unknown as AiGatewayService;
     const service = new CreativeIntelligenceService(gateway, promptEngine);

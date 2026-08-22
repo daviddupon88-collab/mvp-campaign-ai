@@ -1,4 +1,4 @@
-import { classifyRootCause } from './root-cause';
+import { classifyRootCause, projectToGoalFirstRootCause, RootCauseLevel } from './root-cause';
 import { RepairHistoryEntry } from './repair-history';
 import { JudgeCriterionResult, UNAVAILABLE_DEFECT } from './video-judge.types';
 
@@ -154,5 +154,30 @@ describe('classifyRootCause', () => {
       ];
       expect(classifyRootCause('storytelling', { history: [], allCriteria: partial })).toBe('STORYBOARD');
     });
+  });
+});
+
+// Mission 4.3 (Goal-First Quality Architecture, Phase 6b, Étape 23) — mapping fixe et exhaustif,
+// un cas par valeur de RootCauseLevel (12) pour que toute future extension des 12 catégories
+// post-vidéo échoue bruyamment ici (erreur TypeScript, objet non exhaustif) plutôt que de laisser
+// une catégorie silencieusement sans projection.
+describe('projectToGoalFirstRootCause', () => {
+  const cases: [RootCauseLevel, string][] = [
+    ['SCENE', 'SHOT'],
+    ['STORYBOARD', 'NARRATIVE'],
+    ['CONCEPT', 'CONCEPT'],
+    ['PROVIDER', 'TECHNICAL'],
+    ['ASSEMBLY', 'TECHNICAL'],
+    ['AUDIO', 'EXECUTION'],
+    ['BRAND', 'BRAND'],
+    ['PRODUCT_FIDELITY', 'PRODUCT'],
+    ['UNKNOWN', 'TECHNICAL'],
+    ['VOICE', 'EXECUTION'],
+    ['VISUAL_COMPOSITION', 'EXECUTION'],
+    ['SUBTITLE', 'EXECUTION'],
+  ];
+
+  it.each(cases)('projette %s vers %s', (level, expected) => {
+    expect(projectToGoalFirstRootCause(level)).toBe(expected);
   });
 });

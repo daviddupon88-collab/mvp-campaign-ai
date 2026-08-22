@@ -6,14 +6,20 @@ import { BrandContextBuilderService } from '../../brand/brand-context-builder.se
 import { VideoFinalizationService } from '../../video-assembly/video-finalization.service';
 import { PlanLimitExceededException, PlanLimitExceededPayload } from '../../plans/plan-limit.exception';
 import { VisualDnaService, VisualDna } from '../video-direction/visual-dna.service';
-import { VideoDirectorService, ShotPlan, Shot } from '../video-direction/video-director.service';
+import { VideoDirectorService, ShotPlan, Shot, linkBeatsToShots } from '../video-direction/video-director.service';
 import { VideoAnalyzerService, ShotQualityResult } from '../video-direction/video-analyzer.service';
 import { PROMPT_VERSIONS } from '../prompt-versions';
 import { ProductIntelligenceService } from '../product-intelligence/product-intelligence.service';
 import { renderGroundedContext } from '../product-intelligence/product-grounding';
 import { ProductIntelligenceProfile } from '@prisma/client';
+import { ProductFactConflict } from '../product-intelligence/product-fact.types';
 import { CreativeIntelligenceService } from '../creative-intelligence/creative-intelligence.service';
 import { CreativeConceptService } from '../creative-intelligence/creative-concept.service';
+import { NarrativeBlueprintService } from '../creative-intelligence/narrative-blueprint.service';
+import { NarrativeBlueprint } from '../creative-intelligence/narrative-blueprint.types';
+import { buildNarrationFromBlueprint } from '../creative-intelligence/narrative-blueprint-narration';
+import { ShotExecutionContext, compileShotExecutionInstruction } from '../video-direction/shot-execution-compiler';
+import { evaluatePreFlightQuality } from '../video-direction/preflight-quality-gate';
 import { CreativeGateService } from '../creative-intelligence/creative-gate.service';
 import { CreativeGateStatus } from '../creative-intelligence/creative-gate.types';
 import { CreativeIntelligence } from '../creative-intelligence/creative-intelligence.types';
@@ -23,9 +29,10 @@ import { VideoQualityLoopService, VideoClip } from '../video-judge/video-quality
 import { detectShotRepetition, shouldRegeneratePlan, buildAvoidRepetitionHint, ShotRepetitionWarning } from '../video-direction/shot-diversity';
 import { validateShotPlan } from '../video-direction/shot-plan-validator';
 import { StoryboardGateService, applySafePruning } from '../video-direction/storyboard-gate.service';
-import { StoryboardGateStatus } from '../video-direction/storyboard-gate.types';
+import { StoryboardGateStatus, StoryboardGateResult } from '../video-direction/storyboard-gate.types';
 import { sortByGenerationPriority } from '../video-direction/shot-risk';
 import { EntitlementsService } from '../../plans/entitlements.service';
+import { QualityTarget, QUALITY_TARGET_V1 } from '../quality/quality-target';
 
 export interface GenerateCampaignParams {
   organizationId: string;
@@ -34,6 +41,10 @@ export interface GenerateCampaignParams {
   // l'un des deux est fourni avant d'empiler le job — jamais les deux absents en pratique.
   productDescription?: string;
   productImageUrl?: string;
+  // Mission 4.4 (Product URL Intelligence) — URL de page produit publique, optionnelle. Jamais
+  // transmise telle quelle à un prompt créatif (cf. product-page-url-validator.ts/
+  // safe-product-page-fetcher.service.ts) : source de FAITS produit, pas de contenu de prompt.
+  productUrl?: string;
   objective: string;
   channels?: string[]; // ex: ['facebook','instagram','tiktok'] — détermine si une vidéo est générée
   templateHints?: {
@@ -42,6 +53,24 @@ export interface GenerateCampaignParams {
     personaArchetype?: string;
     ctaStyle?: string;
   }; // cf. CampaignTemplate.structureHint — Module 18, guide l'Orchestrator sans figer le contenu
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 7, Étape 19) — présent UNIQUEMENT quand
+  // CampaignsService.regenerate() a confirmé une réutilisation ciblée valide (photo/description/
+  // objectif/canaux identiques à la dernière tentative ET une CreativeGenerationTrace existante
+  // pour cette campagne, cf. regenerate()). CampaignGenerationProcessor route alors vers
+  // AiOrchestratorService.regenerateFromApprovedConcept() au lieu de generateCampaign() —
+  // même job/payload de queue pour les deux chemins, un seul champ discriminant.
+  reuseApprovedConcept?: {
+    creativeIntelligence: CreativeIntelligence;
+    creativeConcept: CreativeConcept;
+    qualityTarget: QualityTarget;
+  };
+}
+
+// Mission 4.4 (Product URL Intelligence) — productConflicts est un champ Json? Prisma, jamais
+// typé statiquement côté client généré — un seul point de cast, réutilisé à chaque site qui doit
+// lire ce champ (PreFlightQualityGate, StoryboardGateService), plutôt que répété 6 fois.
+function productConflictsOf(profile: ProductIntelligenceProfile | null): ProductFactConflict[] | undefined {
+  return (profile?.productConflicts as unknown as ProductFactConflict[] | undefined) ?? undefined;
 }
 
 // AI Orchestrator (cf. chapitre 10.4) : composant le plus stratégique de la plateforme.
@@ -73,6 +102,8 @@ export class AiOrchestratorService {
     // Creative Intelligence Engine & Video Quality Loop (2026-08-18) — cf. plan dédié.
     private readonly creativeIntelligenceService: CreativeIntelligenceService,
     private readonly creativeConceptService: CreativeConceptService,
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — cf. plan dédié.
+    private readonly narrativeBlueprintService: NarrativeBlueprintService,
     // Moteur d'optimisation de la qualité vidéo — V2 (2026-08-19) — cf. plan dédié.
     private readonly creativeGateService: CreativeGateService,
     private readonly storyboardGateService: StoryboardGateService,
@@ -108,6 +139,16 @@ export class AiOrchestratorService {
     const personaHint = hints?.personaArchetype ? `\nArchétype de persona à cibler : ${hints.personaArchetype}` : '';
 
     const ctx: AiCallContext = { organizationId: params.organizationId, campaignId: params.campaignId, purpose: 'campaign_generation' };
+
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 1, Étape 1) — QualityTarget créé ICI,
+    // AVANT tout appel Creative Intelligence/Creative Concept, exactement comme le brief l'exige :
+    // "the target is not an evaluation performed after production". Source UNIQUE du score cible
+    // (75) désormais consommée par Creative Gate ET Storyboard Gate (chacun en dérive ses propres
+    // QualityRequirements filtrées à son stade, cf. CreativeGateService/StoryboardGateService) —
+    // remplace les deux constantes dupliquées CREATIVE_GATE_THRESHOLD/STORYBOARD_GATE_THRESHOLD qui
+    // pouvaient diverger sans qu'aucun test ne le détecte. Persisté tel quel (cf. return plus bas)
+    // pour que CampaignGenerationProcessor le transmette à CreativeGenerationTrace.
+    const qualityTarget: QualityTarget = QUALITY_TARGET_V1;
 
     // Checkpoint A (P0.9, chantier "Creative Intelligence Engine & Video Quality Loop",
     // 2026-08-18) — AVANT TOUT appel IA : hypothèse prudente (3 scènes, cf.
@@ -178,7 +219,11 @@ export class AiOrchestratorService {
             PROMPT_VERSIONS.productAnalysis,
           ),
       params.productImageUrl
-        ? this.productIntelligence.buildProfile(ctx, params.organizationId, params.productImageUrl, params.productDescription)
+        // Mission 4.4 (Product URL Intelligence) — productUrl n'active la fusion que lorsqu'une
+        // photo est ÉGALEMENT fournie : le cache de profil reste basé sur le hash de l'image
+        // (limite connue, documentée — une soumission URL seule sans photo n'est pas encore un
+        // chemin supporté, cf. rapport final).
+        ? this.productIntelligence.buildProfile(ctx, params.organizationId, params.productImageUrl, params.productDescription, params.productUrl)
         : Promise.resolve(null as ProductIntelligenceProfile | null),
     ]);
     const groundedContextBlock = productProfile ? `\n\n${renderGroundedContext(productProfile)}` : '';
@@ -223,7 +268,7 @@ MANDATORIES : <affirmations vérifiables sur le produit UNIQUEMENT — une par l
       audience: hints?.personaArchetype,
       strategyContent: strategy.content,
     });
-    let creativeConcept: CreativeConcept = await this.creativeConceptService.generate(ctx, { creativeIntelligence });
+    let creativeConcept: CreativeConcept = await this.creativeConceptService.generate(ctx, { creativeIntelligence, qualityTarget, productProfile });
 
     // Phase G — Creative Gate (chantier "Moteur d'optimisation de la qualité vidéo — V2",
     // 2026-08-19, spec Sections 35-45) : valide le concept AVANT tout Shot Plan/vidéo — "ne
@@ -231,18 +276,86 @@ MANDATORIES : <affirmations vérifiables sur le produit UNIQUEMENT — une par l
     // bornée à UNE régénération, jamais plus (même philosophie que shot-diversity.ts) : au-delà,
     // la campagne échoue proprement plutôt que de tenter une génération vidéo (150 crédits/plan)
     // sur un concept jamais validé.
-    let creativeGate = await this.creativeGateService.evaluate(ctx, { creativeIntelligence, creativeConcept, objective: params.objective, productProfile });
+    let creativeGate = await this.creativeGateService.evaluate(ctx, { creativeIntelligence, creativeConcept, objective: params.objective, productProfile, qualityTarget });
     if (creativeGate.status !== 'APPROVED') {
       this.logger.warn(`Creative Gate ${creativeGate.status} (score ${creativeGate.score}/100) — régénération unique du concept avec le retour du jugement.`);
       const gateFeedback = [...creativeGate.faiblesses, creativeGate.recommandation].filter(Boolean).join(' ');
-      creativeConcept = await this.creativeConceptService.generate(ctx, { creativeIntelligence, gateFeedback });
-      creativeGate = await this.creativeGateService.evaluate(ctx, { creativeIntelligence, creativeConcept, objective: params.objective, productProfile });
+      creativeConcept = await this.creativeConceptService.generate(ctx, { creativeIntelligence, gateFeedback, qualityTarget, productProfile });
+      creativeGate = await this.creativeGateService.evaluate(ctx, { creativeIntelligence, creativeConcept, objective: params.objective, productProfile, qualityTarget });
       if (creativeGate.status !== 'APPROVED') {
         throw new Error(
           `QUALITY_GATE: concept publicitaire insuffisant après révision (statut ${creativeGate.status}, score ${creativeGate.score}/100) — ${[...creativeGate.causesDeRejet, ...creativeGate.faiblesses].join('; ') || 'aucun détail disponible'}.`,
         );
       }
     }
+
+    return this.finishCampaignFromApprovedConcept(ctx, params, {
+      productAnalysis, productProfile, effectiveParams, strategy, creativeIntelligence, creativeConcept,
+      creativeGateStatus: creativeGate.status, qualityTarget, checkpointACost,
+    });
+  }
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 7, Étape 19) — extraction du bloc partagé
+  // "Creative Concept déjà approuvé -> NarrativeBlueprint -> narration -> copie par canal -> visuel
+  // -> Visual DNA -> Shot Plan -> Storyboard Gate -> vidéo" hors de generateCampaign() : appelé par
+  // generateCampaign() lui-même (comportement byte-identique, seule la forme change) ET par
+  // regenerateFromApprovedConcept() (nouveau, Phase 7) qui réutilise un Creative Concept déjà
+  // approuvé au lieu d'en régénérer un — contrairement au précédent Phase P (regenerateShotPlanAndVideo,
+  // volontairement dupliqué pour ne jamais toucher le corps de generateCampaign()), une VRAIE
+  // extraction est ici plus sûre : dupliquer ce bloc de ~240 lignes (quasi la totalité du corps de
+  // la méthode) aurait un risque de divergence bien plus élevé qu'un déplacement contigu qui ne
+  // change ni l'ordre ni le contenu des appels — les ~75 tests de generateCampaign() restent donc
+  // valides sans modification (même séquence d'appels IA, mêmes index de mock.calls).
+  private async finishCampaignFromApprovedConcept(
+    ctx: AiCallContext,
+    params: GenerateCampaignParams,
+    input: {
+      productAnalysis: AiGenerationResult;
+      productProfile: ProductIntelligenceProfile | null;
+      effectiveParams: GenerateCampaignParams;
+      strategy: AiGenerationResult;
+      creativeIntelligence: CreativeIntelligence;
+      creativeConcept: CreativeConcept;
+      creativeGateStatus: CreativeGateStatus;
+      qualityTarget: QualityTarget;
+      checkpointACost: number;
+    },
+  ) {
+    const { productAnalysis, productProfile, effectiveParams, strategy, creativeIntelligence, creativeConcept, creativeGateStatus, qualityTarget, checkpointACost } = input;
+    const hints = params.templateHints;
+    const targetChannels = params.channels && params.channels.length > 0 ? params.channels : ['general'];
+    const channelCountHint = params.channels && params.channels.length > 0 ? params.channels.length : 1;
+
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 3, Étape 4) — NarrativeBlueprint généré
+    // ICI, juste après l'approbation du Creative Concept par le Creative Gate et AVANT tout script
+    // de canal : devient la source UNIQUE dont narration ET script de chaque canal dérivent tous
+    // les deux (remplace l'ancien mécanisme où la narration était reconstituée par regex depuis le
+    // seul script TikTok — cf. buildNarrationFromBlueprint pour l'historique du bug corrigé).
+    const narrativeBlueprint = await this.narrativeBlueprintService.generate(ctx, { creativeConcept, qualityTarget });
+
+    // Voix off générée pour CHAQUE campagne, au même titre que la vidéo — une vidéo publicitaire
+    // sans son n'est pas un format utilisable en l'état. Calculée ICI (déterministe, aucun appel
+    // IA supplémentaire, cf. buildNarrationFromBlueprint) : ne dépend plus du script d'un canal
+    // particulier (TikTok), donc démarrée AVANT la génération des scripts de canaux plutôt
+    // qu'après — optimisation de latence supplémentaire, effet de bord de cette correction.
+    const narrationText = buildNarrationFromBlueprint(narrativeBlueprint, effectiveParams.productDescription ?? '');
+    // Démarré ICI plutôt qu'attendu juste avant utilisation (2026-08-19, optimisation latence) :
+    // la voix off ne dépend d'AUCUN résultat de la chaîne vidéo qui suit (shot plan, plans
+    // individuels, boucle de réparation) — seulement de narrationText, déjà prêt. La promesse
+    // s'exécute donc EN PARALLÈLE de toute la génération vidéo (potentiellement plusieurs
+    // minutes) au lieu de s'ajouter après coup ; récupérée plus bas, juste avant la
+    // transcription qui en a réellement besoin.
+    const narrationPromise = this.aiGateway.generateAudio(ctx, { prompt: narrationText }, 'openai');
+    // Bug réel constaté en conditions réelles (2026-08-22, crédits OpenAI épuisés en cours de
+    // campagne) : cette promesse n'est awaited que BEAUCOUP plus loin (juste avant la
+    // transcription) — si une étape intermédiaire (Creative Gate/Storyboard Gate/PreFlight/génération
+    // vidéo) échoue et lève AVANT ce point, le rejet éventuel de narrationPromise (ex. panne
+    // fournisseur TTS) n'est jamais intercepté nulle part — Node 15+ termine tout le PROCESSUS
+    // (pas seulement ce job) sur une "unhandled promise rejection", pas seulement ce job BullMQ.
+    // .catch(() => {}) ICI marque le rejet comme géré pour Node SANS changer le comportement du
+    // "await narrationPromise" réel plus bas, qui continue de rejeter normalement à cet endroit
+    // (capté par le try/catch du worker BullMQ, comportement inchangé dans le cas nominal).
+    narrationPromise.catch(() => undefined);
 
     // Parallélisé (2026-08-19, optimisation latence — campagnes réelles observées dépassant
     // 1h) : chaque canal est indépendant (aucun état partagé, aucune dépendance entre appels,
@@ -251,7 +364,7 @@ MANDATORIES : <affirmations vérifiables sur le produit UNIQUEMENT — une par l
     // temps. Comportement inchangé, uniquement le temps d'exécution.
     const channelContent: Record<string, AiGenerationResult> = {};
     const channelResults = await Promise.all(
-      targetChannels.map(async (channel) => [channel, await this.generateChannelCopy(ctx, channel, effectiveParams, strategy.content, hints, creativeConcept)] as const),
+      targetChannels.map(async (channel) => [channel, await this.generateChannelCopy(ctx, channel, effectiveParams, strategy.content, hints, creativeConcept, narrativeBlueprint)] as const),
     );
     for (const [channel, result] of channelResults) {
       channelContent[channel] = result;
@@ -290,36 +403,6 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       PROMPT_VERSIONS.visual,
     );
 
-    // Voix off générée pour CHAQUE campagne, au même titre que la vidéo — une vidéo
-    // publicitaire sans son n'est pas un format utilisable en l'état. Dérivée du script TikTok
-    // (hook + plans) quand il existe plutôt que régénérée par un appel IA séparé : un seul
-    // script fait autorité pour ce que "dit" la campagne. Calculée ICI (avant la vidéo, pas
-    // après comme avant le 2026-08-18) : pur calcul de chaîne, aucun appel IA — sert désormais
-    // aussi de contexte de rythme au Video Director ci-dessous, pour que le Shot Plan et la
-    // narration racontent la même histoire.
-    //
-    // Bug corrigé le 2026-08-19 (constaté en conditions réelles — 1er passage E2E complet du
-    // chantier Creative Intelligence Engine) : le repli quand aucun canal TikTok n'est
-    // sélectionné (scriptBasis absent, cas COURANT — ex. Facebook+Instagram seuls) reconstruisait
-    // la narration à partir de la SEULE productDescription brute, ignorant totalement le hook/
-    // l'histoire/le CTA déjà produits par CreativeConceptService. Résultat mesuré par le Video
-    // Judge sur cette campagne réelle : storytelling 15/100, hookStrength 25/100, ctaClarity
-    // 10/100 — la narration se limitait à "Découvrez [produit]", jamais la publicité pensée en
-    // amont. buildFallbackNarration s'appuie désormais sur creativeConcept (hook + message
-    // central + CTA, déjà calculé à ce point, cf. plus haut), qui existe pour TOUTE campagne —
-    // avec ou sans photo, avec ou sans TikTok — contrairement à productDescription qui reste le
-    // seul repli si creativeConcept est lui-même en échec (parsing défensif, jamais de throw).
-    const scriptBasis = channelContent['tiktok']?.content;
-    const narrationText = scriptBasis ? this.scriptToNarration(scriptBasis) : this.buildFallbackNarration(creativeConcept, effectiveParams.productDescription ?? '');
-
-    // Démarré ICI plutôt qu'attendu juste avant utilisation (2026-08-19, optimisation latence) :
-    // la voix off ne dépend d'AUCUN résultat de la chaîne vidéo qui suit (shot plan, plans
-    // individuels, boucle de réparation) — seulement de narrationText, déjà prêt. La promesse
-    // s'exécute donc EN PARALLÈLE de toute la génération vidéo (potentiellement plusieurs
-    // minutes) au lieu de s'ajouter après coup ; récupérée plus bas, juste avant la
-    // transcription qui en a réellement besoin.
-    const narrationPromise = this.aiGateway.generateAudio(ctx, { prompt: narrationText }, 'openai');
-
     // Vidéo générée pour CHAQUE campagne, indépendamment des canaux sélectionnés — c'est la
     // promesse produit centrale, pas une option réservée à TikTok/Instagram. Un échec de
     // génération vidéo n'est pas masqué ici : il remonte comme une vraie erreur, gérée par
@@ -357,7 +440,7 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       productDescription: effectiveParams.productDescription ?? '',
       objective: params.objective,
       campaignContext: strategy.content,
-      narrationHint: narrationText,
+      narrativeBlueprint,
       creativeConcept,
     });
 
@@ -371,7 +454,7 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
         productDescription: effectiveParams.productDescription ?? '',
         objective: params.objective,
         campaignContext: strategy.content,
-        narrationHint: narrationText,
+        narrativeBlueprint,
         creativeConcept,
         avoidRepetitionHint: buildAvoidRepetitionHint(repetitionWarnings),
       });
@@ -383,7 +466,12 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
     // de scènes (spec Sections 47-48, 56) applique un garde-fou déterministe (applySafePruning) —
     // jamais le LLM seul décide quoi supprimer.
     let expectedShotCount = creativeConcept.scenesCount;
-    let storyboardGate = await this.storyboardGateService.evaluate(ctx, { creativeConcept, shotPlan });
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 5b, Étape 8) — instructions RÉELLEMENT
+    // compilées pour Veo (ShotExecutionCompiler, Phase 4), recalculées à chaque évaluation puisque
+    // shotPlan peut avoir changé entre-temps : le Storyboard Gate juge ce que le fournisseur vidéo
+    // recevra, pas seulement le Shot Plan JSON brut.
+    let executionInstructions = shotPlan.map((shot) => ({ sceneId: shot.sceneId, prompt: compileShotExecutionInstruction(shot, { creativeConcept, narrativeBlueprint }).prompt }));
+    let storyboardGate = await this.storyboardGateService.evaluate(ctx, { creativeConcept, shotPlan, qualityTarget, narrativeBlueprint, executionInstructions, productProfile });
     if (storyboardGate.status !== 'APPROVED') {
       this.logger.warn(`Storyboard Gate ${storyboardGate.status} (score ${storyboardGate.score}/100) — régénération unique du Shot Plan avec le retour du jugement.`);
       shotPlan = await this.videoDirector.generateShotPlan(ctx, {
@@ -391,14 +479,18 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
         productDescription: effectiveParams.productDescription ?? '',
         objective: params.objective,
         campaignContext: strategy.content,
-        narrationHint: narrationText,
+        narrativeBlueprint,
         creativeConcept,
-        storyboardGateFeedback: [...storyboardGate.faiblesses, storyboardGate.recommandation].filter(Boolean).join(' '),
+        storyboardGateFeedback: [...storyboardGate.blockingDefects, ...storyboardGate.requiredChanges].filter(Boolean).join(' '),
       });
       expectedShotCount = shotPlan.length;
-      storyboardGate = await this.storyboardGateService.evaluate(ctx, { creativeConcept, shotPlan });
+      executionInstructions = shotPlan.map((shot) => ({ sceneId: shot.sceneId, prompt: compileShotExecutionInstruction(shot, { creativeConcept, narrativeBlueprint }).prompt }));
+      storyboardGate = await this.storyboardGateService.evaluate(ctx, { creativeConcept, shotPlan, qualityTarget, narrativeBlueprint, executionInstructions, productProfile });
       if (storyboardGate.status !== 'APPROVED') {
-        throw new Error(`QUALITY_GATE: storyboard insuffisant après révision (score ${storyboardGate.score}/100) — ${storyboardGate.faiblesses.join('; ') || 'aucun détail disponible'}.`);
+        throw new Error(
+          `QUALITY_GATE: storyboard insuffisant après révision (score ${storyboardGate.score}/100) — ${storyboardGate.blockingDefects.join('; ') || 'aucun détail disponible'}.` +
+            (storyboardGate.rootCauseLevel ? ` Cause racine : ${storyboardGate.rootCauseLevel}${!['SHOT', 'NARRATIVE'].includes(storyboardGate.rootCauseLevel) ? ' (hors du périmètre corrigible par une simple régénération du plan de tournage).' : '.'}` : ''),
+        );
       }
     }
     if (storyboardGate.scenesToRemove.length > 0) {
@@ -420,7 +512,21 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       this.logger.warn(`Plan de tournage : ${shotPlanValidation.warnings.join(' ; ')}`);
     }
 
-    const { video, videoClips, perShotQuality } = await this.generateShotPlanVideoOrDegrade(ctx, shotPlan, referenceImageUrl, visualDnaResult, params.organizationId);
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 5, Étape 7) — dernier point de contrôle
+    // DÉTERMINISTE (aucun appel IA) avant la boucle de génération vidéo (150 crédits/plan) :
+    // Visual DNA/qualityAlignment/beats narratifs/liens shot-beat, jusqu'ici calculés mais jamais
+    // vérifiés par rien avant Veo.
+    const preFlight = evaluatePreFlightQuality({ visualDna: visualDnaResult, creativeConcept, narrativeBlueprint, shotPlan, shotPlanValidation, narrationText, productConflicts: productConflictsOf(productProfile) });
+    if (!preFlight.ready) {
+      throw new Error(`QUALITY_GATE: pré-vol qualité échoué — ${preFlight.blockingReasons.join('; ')}. Aucune vidéo n'a été générée pour éviter de gaspiller des crédits sur un plan non conforme.`);
+    }
+
+    const { video, videoClips, perShotQuality } = await this.generateShotPlanVideoOrDegrade(ctx, shotPlan, referenceImageUrl, visualDnaResult, params.organizationId, { creativeConcept, narrativeBlueprint });
+
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 5) — beats[].shotIds peuplé
+    // maintenant que le Shot Plan final (post storyboard-gate/élagage) est connu ; remplace la
+    // version brute exposée plus bas sur le résultat.
+    const enrichedNarrativeBlueprint = linkBeatsToShots(shotPlan, narrativeBlueprint);
 
     const narration = await narrationPromise;
 
@@ -441,6 +547,11 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       // VideoQualityLoopService en a besoin pour un AUDIO_REGEN/CLIP_REGEN ciblé.
       videoClips, shotPlan, perShotQuality, creativeIntelligence, creativeConcept, productProfile, maxRepairAttempts,
       narrationText, visualDnaResult, referenceImageUrl,
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 3/4) — exposé pour que
+      // CampaignGenerationProcessor.tryEscalate le transmette à regenerateShotPlanAndVideo lors
+      // d'une escalade STORYBOARD (le concept, donc le blueprint, ne change pas à ce niveau).
+      // Enrichi depuis la Phase 4 (beats[].shotIds reflète le Shot Plan final).
+      narrativeBlueprint: enrichedNarrativeBlueprint,
       // Phase P (chantier "Optimisation du pipeline vidéo — V2.1", 2026-08-19) — exposé pour que
       // CampaignGenerationProcessor.finalizeVideoAsset puisse appeler regenerateShotPlanAndVideo/
       // regenerateConceptStoryboardAndVideo lors d'une escalade, avec le MÊME objective/
@@ -453,9 +564,111 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       // Phase J (chantier V2, 2026-08-19) — statuts finaux des portes amont, nécessaires au
       // Final Advertising Gate (câblage final, cf. campaign-generation.processor.ts) pour
       // vérifier qu'aucune porte n'a été contournée avant la livraison.
-      creativeGateStatus: creativeGate.status,
+      creativeGateStatus,
       storyboardGateStatus: storyboardGate.status,
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 5b/6b) — résultat COMPLET (pas
+      // seulement le statut) du dernier Storyboard Gate/PreProductionQualityJudge franchi pour
+      // cette campagne : criterionScores/blockingDefects/risks/requiredChanges/rootCauseLevel,
+      // exposé pour que CampaignGenerationProcessor le persiste sur GoalFirstTrace, même quand la
+      // campagne aboutit sans jamais avoir besoin d'escalade.
+      storyboardGateResult: storyboardGate,
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 1) — exposé pour que
+      // CampaignGenerationProcessor thread la même instance jusqu'à
+      // CreativeGenerationTraceService.upsertTrace (persistance dans la trace de génération).
+      qualityTarget,
     };
+  }
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 7, Étape 19) — réutilisation CIBLÉE pour
+  // CampaignsService.regenerate() (l'endpoint utilisateur manuel, distinct des escalades internes
+  // Phase P) : appelée UNIQUEMENT quand CampaignsService a déjà confirmé (a) que la photo/
+  // description/objectif/canaux sont IDENTIQUES à la dernière tentative, ET (b) qu'une
+  // CreativeGenerationTrace existe déjà pour cette campagne — ce qui garantit structurellement que
+  // son creativeConcept a déjà franchi le Creative Gate avec succès (seul chemin qui écrit une
+  // trace, cf. CampaignGenerationProcessor.finalizeVideoAsset). Saute donc Creative
+  // Intelligence + Creative Concept + Creative Gate (le trio le plus coûteux/itératif de tout le
+  // pipeline — jusqu'à 2 évaluations de gate en plus de la génération elle-même) — tout le reste
+  // (stratégie, NarrativeBlueprint, narration, copie par canal, visuel, Visual DNA, Shot Plan,
+  // Storyboard Gate, vidéo) est régénéré à neuf via finishCampaignFromApprovedConcept, exactement
+  // comme une génération normale : reprendre le concept ne veut pas dire reprendre l'exécution.
+  async regenerateFromApprovedConcept(
+    params: GenerateCampaignParams & {
+      creativeIntelligence: CreativeIntelligence;
+      creativeConcept: CreativeConcept;
+      qualityTarget: QualityTarget;
+    },
+  ) {
+    const ctx: AiCallContext = { organizationId: params.organizationId, campaignId: params.campaignId, purpose: 'campaign_generation' };
+    const hints = params.templateHints;
+    const analysisAngleHint = hints?.analysisAngle ? `\nAngle d'analyse à privilégier : ${hints.analysisAngle}` : '';
+    const personaHint = hints?.personaArchetype ? `\nArchétype de persona à cibler : ${hints.personaArchetype}` : '';
+    const targetChannels = params.channels && params.channels.length > 0 ? params.channels : ['general'];
+    const channelCountHint = params.channels && params.channels.length > 0 ? params.channels.length : 1;
+
+    // Même garde-fou budgétaire qu'une génération normale (generateCampaign()) — une réutilisation
+    // du concept n'exempte jamais des vérifications de crédits/quota, seulement du TRAVAIL de
+    // reconstruction du concept lui-même.
+    const checkpointACost = await this.costControl.assertBeforeGeneration(params.organizationId, channelCountHint, VideoQualityLoopService.MAX_REPAIR_ATTEMPTS);
+
+    const globalBrandContext = await this.brandContext.build({ organizationId: params.organizationId, persona: hints?.personaArchetype });
+    const brandContextBlock = globalBrandContext.text ? `\n\nContexte de marque :\n${globalBrandContext.text}` : '';
+
+    // productAnalysis/productProfile régénérés (pas persistés sur CreativeGenerationTrace) — coût
+    // marginal (2 appels, dont 1 en cache si la même photo est réutilisée, cf.
+    // ProductIntelligenceService) largement inférieur à celui du trio Creative
+    // Intelligence/Concept/Gate qu'on évite précisément grâce à cette méthode.
+    const [productAnalysis, productProfile] = await Promise.all([
+      params.productImageUrl
+        ? this.analyzeProductImage(ctx, params.productImageUrl, params.productDescription, analysisAngleHint)
+        : this.aiGateway.generateText(
+            ctx,
+            { prompt: `Analyse ce produit et identifie ses forces, faiblesses et USP: ${params.productDescription}${analysisAngleHint}` },
+            'openai',
+            PROMPT_VERSIONS.productAnalysis,
+          ),
+      params.productImageUrl
+        // Mission 4.4 (Product URL Intelligence) — productUrl n'active la fusion que lorsqu'une
+        // photo est ÉGALEMENT fournie : le cache de profil reste basé sur le hash de l'image
+        // (limite connue, documentée — une soumission URL seule sans photo n'est pas encore un
+        // chemin supporté, cf. rapport final).
+        ? this.productIntelligence.buildProfile(ctx, params.organizationId, params.productImageUrl, params.productDescription, params.productUrl)
+        : Promise.resolve(null as ProductIntelligenceProfile | null),
+    ]);
+    const groundedContextBlock = productProfile ? `\n\n${renderGroundedContext(productProfile)}` : '';
+
+    // Stratégie régénérée à neuf (jamais persistée sur la trace) — nécessaire à la copie par canal
+    // (generateChannelCopy en a besoin), même si Creative Intelligence/Concept ne le sont pas.
+    const strategy = await this.aiGateway.generateText(
+      ctx,
+      {
+        prompt: `À partir de cette analyse produit, propose une stratégie marketing SMART pour l'objectif "${params.objective}".
+Contrainte impérative : cette stratégie doit être intégralement réalisable avec UNIQUEMENT ce que campaign-ai produit réellement pour cette campagne — un texte publicitaire par canal parmi [${targetChannels.join(', ')}], un visuel, et une courte vidéo. Ne propose JAMAIS de tactiques hors de ce périmètre (emails, SMS, landing page dédiée, retargeting publicitaire, pop-up, etc.) — la stratégie doit se limiter à ce qui sera effectivement livré sur ces canaux.
+${productAnalysis.content}${personaHint}${brandContextBlock}${groundedContextBlock}
+
+Termine ta réponse par un bloc structuré, strictement basé sur l'analyse produit ci-dessus (jamais une caractéristique inventée), au format :
+
+AUDIENCE : <cible en une phrase>
+TON : <ton éditorial à adopter>
+MESSAGE CLÉ : <la promesse centrale, en une phrase>
+MANDATORIES : <affirmations vérifiables sur le produit UNIQUEMENT — une par ligne commençant par "-" — ne jamais inclure de caractéristique (écologique, biodégradable, hypoallergénique, etc.) non confirmée explicitement par l'analyse produit ci-dessus>`,
+      },
+      'anthropic',
+      PROMPT_VERSIONS.strategy,
+    );
+
+    const effectiveParams: GenerateCampaignParams = {
+      ...params,
+      productDescription: params.productDescription?.trim() || productAnalysis.content,
+    };
+
+    return this.finishCampaignFromApprovedConcept(ctx, params, {
+      productAnalysis, productProfile, effectiveParams, strategy,
+      creativeIntelligence: params.creativeIntelligence,
+      creativeConcept: params.creativeConcept,
+      creativeGateStatus: 'APPROVED',
+      qualityTarget: params.qualityTarget,
+      checkpointACost,
+    });
   }
 
   // Phase P — Escalade automatique EXÉCUTÉE (chantier "Optimisation du pipeline vidéo — V2.1",
@@ -474,12 +687,23 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       referenceImageUrl: string;
       effectiveParams: GenerateCampaignParams;
       strategy: string; // campaignContext — strategy.content dans generateCampaign()
-      narrationText: string;
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — remplace l'ancien narrationText
+      // (texte plat) : seul consommateur était le narrationHint transmis à generateShotPlan,
+      // désormais narrativeBlueprint directement.
+      narrativeBlueprint: NarrativeBlueprint;
       organizationId: string;
       // Défauts du dernier jugement Video Judge qui a motivé CETTE escalade — seedé directement
       // dans storyboardGateFeedback du 1er appel à generateShotPlan (jamais un aller à l'aveugle
       // vers le même plan déjà jugé insuffisant).
       escalationFeedback?: string;
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 1) — MÊME instance que celle créée en
+      // tête de generateCampaign(), jamais recréée ici (une escalade ne doit jamais juger contre
+      // une cible différente de la génération initiale).
+      qualityTarget: QualityTarget;
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 5b) — nécessaire à l'appel du
+      // Storyboard Gate étendu (groundedContextBlock) ; les deux appelants (tryEscalate côté
+      // STORYBOARD, regenerateConceptStoryboardAndVideo côté CONCEPT) l'ont déjà en portée.
+      productProfile: ProductIntelligenceProfile | null;
     },
   ): Promise<{
     shotPlan: ShotPlan;
@@ -487,15 +711,22 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
     videoClips: VideoClip[];
     perShotQuality: Map<string, ShotQualityResult>;
     storyboardGateStatus: StoryboardGateStatus;
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 6b) — même raisonnement que sur
+    // generateCampaign() : résultat complet du dernier Storyboard Gate franchi lors de CETTE
+    // escalade, pour que GoalFirstTrace reste renseigné même après une escalade STORYBOARD.
+    storyboardGateResult: StoryboardGateResult;
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 4) — enrichi (beats[].shotIds
+    // reflétant CE Shot Plan régénéré), cf. linkBeatsToShots plus bas.
+    narrativeBlueprint: NarrativeBlueprint;
   }> {
-    const { creativeConcept, visualDnaResult, referenceImageUrl, effectiveParams, strategy, narrationText, organizationId, escalationFeedback } = params;
+    const { creativeConcept, visualDnaResult, referenceImageUrl, effectiveParams, strategy, narrativeBlueprint, organizationId, escalationFeedback, qualityTarget, productProfile } = params;
 
     let shotPlan = await this.videoDirector.generateShotPlan(ctx, {
       visualDna: visualDnaResult,
       productDescription: effectiveParams.productDescription ?? '',
       objective: effectiveParams.objective,
       campaignContext: strategy,
-      narrationHint: narrationText,
+      narrativeBlueprint,
       creativeConcept,
       storyboardGateFeedback: escalationFeedback,
     });
@@ -508,14 +739,15 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
         productDescription: effectiveParams.productDescription ?? '',
         objective: effectiveParams.objective,
         campaignContext: strategy,
-        narrationHint: narrationText,
+        narrativeBlueprint,
         creativeConcept,
         avoidRepetitionHint: buildAvoidRepetitionHint(repetitionWarnings),
       });
     }
 
     let expectedShotCount = creativeConcept.scenesCount;
-    let storyboardGate = await this.storyboardGateService.evaluate(ctx, { creativeConcept, shotPlan });
+    let executionInstructions = shotPlan.map((shot) => ({ sceneId: shot.sceneId, prompt: compileShotExecutionInstruction(shot, { creativeConcept, narrativeBlueprint }).prompt }));
+    let storyboardGate = await this.storyboardGateService.evaluate(ctx, { creativeConcept, shotPlan, qualityTarget, narrativeBlueprint, executionInstructions, productProfile });
     if (storyboardGate.status !== 'APPROVED') {
       this.logger.warn(`Escalade storyboard : Storyboard Gate ${storyboardGate.status} (score ${storyboardGate.score}/100) — régénération unique du Shot Plan avec le retour du jugement.`);
       shotPlan = await this.videoDirector.generateShotPlan(ctx, {
@@ -523,14 +755,18 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
         productDescription: effectiveParams.productDescription ?? '',
         objective: effectiveParams.objective,
         campaignContext: strategy,
-        narrationHint: narrationText,
+        narrativeBlueprint,
         creativeConcept,
-        storyboardGateFeedback: [...storyboardGate.faiblesses, storyboardGate.recommandation].filter(Boolean).join(' '),
+        storyboardGateFeedback: [...storyboardGate.blockingDefects, ...storyboardGate.requiredChanges].filter(Boolean).join(' '),
       });
       expectedShotCount = shotPlan.length;
-      storyboardGate = await this.storyboardGateService.evaluate(ctx, { creativeConcept, shotPlan });
+      executionInstructions = shotPlan.map((shot) => ({ sceneId: shot.sceneId, prompt: compileShotExecutionInstruction(shot, { creativeConcept, narrativeBlueprint }).prompt }));
+      storyboardGate = await this.storyboardGateService.evaluate(ctx, { creativeConcept, shotPlan, qualityTarget, narrativeBlueprint, executionInstructions, productProfile });
       if (storyboardGate.status !== 'APPROVED') {
-        throw new Error(`QUALITY_GATE: storyboard insuffisant après révision (escalade) (score ${storyboardGate.score}/100) — ${storyboardGate.faiblesses.join('; ') || 'aucun détail disponible'}.`);
+        throw new Error(
+          `QUALITY_GATE: storyboard insuffisant après révision (escalade) (score ${storyboardGate.score}/100) — ${storyboardGate.blockingDefects.join('; ') || 'aucun détail disponible'}.` +
+            (storyboardGate.rootCauseLevel ? ` Cause racine : ${storyboardGate.rootCauseLevel}${!['SHOT', 'NARRATIVE'].includes(storyboardGate.rootCauseLevel) ? ' (hors du périmètre corrigible par une simple régénération du plan de tournage).' : '.'}` : ''),
+        );
       }
     }
     if (storyboardGate.scenesToRemove.length > 0) {
@@ -546,9 +782,25 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       this.logger.warn(`Plan de tournage (escalade) : ${shotPlanValidation.warnings.join(' ; ')}`);
     }
 
-    const { video, videoClips, perShotQuality } = await this.generateShotPlanVideoOrDegrade(ctx, shotPlan, referenceImageUrl, visualDnaResult, organizationId);
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 5, Étape 7) — même contrôle qu'en 1ère
+    // génération. narrationText n'est pas un paramètre de cette méthode (Phase 3 l'a remplacé par
+    // narrativeBlueprint) — recalculé ici, déterministe, aucun nouvel appel IA.
+    const preFlight = evaluatePreFlightQuality({
+      visualDna: visualDnaResult,
+      creativeConcept,
+      narrativeBlueprint,
+      shotPlan,
+      shotPlanValidation,
+      narrationText: buildNarrationFromBlueprint(narrativeBlueprint, effectiveParams.productDescription ?? ''),
+      productConflicts: productConflictsOf(productProfile),
+    });
+    if (!preFlight.ready) {
+      throw new Error(`QUALITY_GATE: pré-vol qualité échoué (escalade) — ${preFlight.blockingReasons.join('; ')}. Aucune vidéo n'a été générée pour éviter de gaspiller des crédits sur un plan non conforme.`);
+    }
 
-    return { shotPlan, video, videoClips, perShotQuality, storyboardGateStatus: storyboardGate.status };
+    const { video, videoClips, perShotQuality } = await this.generateShotPlanVideoOrDegrade(ctx, shotPlan, referenceImageUrl, visualDnaResult, organizationId, { creativeConcept, narrativeBlueprint });
+
+    return { shotPlan, video, videoClips, perShotQuality, storyboardGateStatus: storyboardGate.status, storyboardGateResult: storyboardGate, narrativeBlueprint: linkBeatsToShots(shotPlan, narrativeBlueprint) };
   }
 
   // Phase P — Escalade au niveau CONCEPT : réutilise creativeConceptService.generate(gateFeedback)
@@ -570,6 +822,9 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       // Défauts du dernier jugement Video Judge (et/ou de l'échec de l'escalade storyboard
       // précédente) qui motivent CETTE escalade — seedé dans creativeConceptService.generate.
       escalationFeedback: string;
+      // Mission 4.3 (Goal-First Quality Architecture, Phase 1) — MÊME instance que celle créée en
+      // tête de generateCampaign(), jamais recréée ici.
+      qualityTarget: QualityTarget;
     },
   ): Promise<{
     creativeConcept: CreativeConcept;
@@ -579,19 +834,24 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
     perShotQuality: Map<string, ShotQualityResult>;
     creativeGateStatus: CreativeGateStatus;
     storyboardGateStatus: StoryboardGateStatus;
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 6b) — cf. regenerateShotPlanAndVideo.
+    storyboardGateResult: StoryboardGateResult;
     narrationText: string;
     narrationDataUri: string;
     transcript: TranscriptSegment[] | null;
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 4) — enrichi (beats[].shotIds
+    // reflétant le Shot Plan régénéré sur ce nouveau concept).
+    narrativeBlueprint: NarrativeBlueprint;
   }> {
-    const { creativeIntelligence, visualDnaResult, referenceImageUrl, effectiveParams, strategy, organizationId, productProfile, escalationFeedback } = params;
+    const { creativeIntelligence, visualDnaResult, referenceImageUrl, effectiveParams, strategy, organizationId, productProfile, escalationFeedback, qualityTarget } = params;
 
-    let creativeConcept = await this.creativeConceptService.generate(ctx, { creativeIntelligence, gateFeedback: escalationFeedback });
-    let creativeGate = await this.creativeGateService.evaluate(ctx, { creativeIntelligence, creativeConcept, objective: effectiveParams.objective, productProfile });
+    let creativeConcept = await this.creativeConceptService.generate(ctx, { creativeIntelligence, gateFeedback: escalationFeedback, qualityTarget, productProfile });
+    let creativeGate = await this.creativeGateService.evaluate(ctx, { creativeIntelligence, creativeConcept, objective: effectiveParams.objective, productProfile, qualityTarget });
     if (creativeGate.status !== 'APPROVED') {
       this.logger.warn(`Escalade concept : Creative Gate ${creativeGate.status} (score ${creativeGate.score}/100) — régénération unique du concept avec le retour du jugement.`);
       const gateFeedback = [...creativeGate.faiblesses, creativeGate.recommandation].filter(Boolean).join(' ');
-      creativeConcept = await this.creativeConceptService.generate(ctx, { creativeIntelligence, gateFeedback });
-      creativeGate = await this.creativeGateService.evaluate(ctx, { creativeIntelligence, creativeConcept, objective: effectiveParams.objective, productProfile });
+      creativeConcept = await this.creativeConceptService.generate(ctx, { creativeIntelligence, gateFeedback, qualityTarget, productProfile });
+      creativeGate = await this.creativeGateService.evaluate(ctx, { creativeIntelligence, creativeConcept, objective: effectiveParams.objective, productProfile, qualityTarget });
       if (creativeGate.status !== 'APPROVED') {
         throw new Error(
           `QUALITY_GATE: concept publicitaire insuffisant après révision (escalade) (statut ${creativeGate.status}, score ${creativeGate.score}/100) — ${[...creativeGate.causesDeRejet, ...creativeGate.faiblesses].join('; ') || 'aucun détail disponible'}.`,
@@ -599,24 +859,34 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       }
     }
 
-    const narrationText = this.buildFallbackNarration(creativeConcept, effectiveParams.productDescription ?? '');
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — un nouveau concept invalide
+    // l'ancien NarrativeBlueprint (il racontait l'ancienne idée) : régénéré ici avant toute
+    // narration/Shot Plan, même discipline qu'en 1ère génération (generateCampaign()).
+    const narrativeBlueprint = await this.narrativeBlueprintService.generate(ctx, { creativeConcept, qualityTarget });
+    const narrationText = buildNarrationFromBlueprint(narrativeBlueprint, effectiveParams.productDescription ?? '');
     const narration = await this.aiGateway.generateAudio(ctx, { prompt: narrationText }, 'openai');
     const transcript = await this.transcribeNarrationOrDegrade(ctx, narration.content);
 
-    const { shotPlan, video, videoClips, perShotQuality, storyboardGateStatus } = await this.regenerateShotPlanAndVideo(ctx, {
+    const {
+      shotPlan, video, videoClips, perShotQuality, storyboardGateStatus, storyboardGateResult,
+      narrativeBlueprint: enrichedNarrativeBlueprint,
+    } = await this.regenerateShotPlanAndVideo(ctx, {
       creativeConcept,
       visualDnaResult,
       referenceImageUrl,
       effectiveParams,
       strategy,
-      narrationText,
+      narrativeBlueprint,
+      qualityTarget,
       organizationId,
+      productProfile,
     });
 
     return {
       creativeConcept, shotPlan, video, videoClips, perShotQuality,
-      creativeGateStatus: creativeGate.status, storyboardGateStatus,
+      creativeGateStatus: creativeGate.status, storyboardGateStatus, storyboardGateResult,
       narrationText, narrationDataUri: narration.content, transcript,
+      narrativeBlueprint: enrichedNarrativeBlueprint,
     };
   }
 
@@ -633,79 +903,6 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       this.logger.warn(`Transcription de la narration échouée — vidéo générée sans sous-titres : ${error}`);
       return null;
     }
-  }
-
-  // Reconstitue le texte à dire à partir du Hook + de chaque réplique "Voix off: ..." (format
-  // demandé par buildChannelPrompt, cas 'tiktok') — jamais les segments "Visuel: ..." (indications
-  // de mise en scène, pas du texte parlé). Corrige un défaut constaté en conditions réelles le
-  // 2026-08-16 : l'ancienne version se contentait de retirer les lignes "Plan N — ...", ne
-  // laissant que le hook (une phrase, ~3s) comme narration — bien en deçà des 15-30s demandés au
-  // modèle, et donc une vidéo finale bien plus courte que prévu (finalDuration = narrationDuration,
-  // cf. VideoAssemblyService).
-  private scriptToNarration(script: string): string {
-    const hook = /^Hook:\s*(.+)$/m.exec(script)?.[1]?.trim();
-    const voiceOverLines = [...script.matchAll(/Voix off\s*:\s*([^\n|]+)/gi)].map((m) => m[1].trim());
-
-    const structured = [hook, ...voiceOverLines].filter((s): s is string => !!s).join(' ');
-    if (structured) return structured.replace(/\s+/g, ' ').trim();
-
-    // Repli si le modèle n'a pas respecté le format "Voix off: ..." demandé (même comportement
-    // que l'ancienne implémentation) : ne retire que les lignes de mise en scène "Plan N — ...",
-    // garde tout le reste plutôt que de renvoyer une narration vide.
-    return script
-      .split('\n')
-      .filter((line) => !/^Plan\s+\d+\s*—/.test(line.trim()))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  // Réduit un texte long (typiquement productDescription, souvent l'analyse vision complète —
-  // plusieurs phrases, parfois un paragraphe) à une longueur adaptée à une narration de repli
-  // courte (~140 caractères, cohérent avec les 6-8s d'un clip vidéo unique sans canal TikTok).
-  // Préfère couper sur la première phrase plutôt qu'en plein milieu d'un mot quand elle tient
-  // dans le budget ; sinon tronque dur avec une ellipse.
-  private truncateForNarration(text: string, maxChars = 140): string {
-    const trimmed = text.trim();
-    const firstSentence = /^[^.!?\n]+[.!?]?/.exec(trimmed)?.[0]?.replace(/[.!?]+$/, '').trim();
-    if (firstSentence && firstSentence.length <= maxChars) return firstSentence;
-    return trimmed.length > maxChars ? `${trimmed.slice(0, maxChars).trim()}…` : trimmed;
-  }
-
-  // Bug réel constaté en conditions réelles le 2026-08-18 : sans canal TikTok, la narration de
-  // repli utilisait directement `effectiveParams.productDescription` — qui, quand dérivé d'une
-  // photo (pas de texte saisi par l'utilisateur), N'EST PAS une phrase naturelle mais le bloc
-  // ÉTIQUETÉ produit par formatProductAnalysis() ("Catégorie détectée : ...\nFourchette de prix
-  // estimée : ...\n..."). truncateForNarration() s'arrêtant au premier \n, la narration finale
-  // disait littéralement "Découvrez Catégorie détectée : Produits ménagers...", lu à voix haute
-  // tel quel. Corrigé en détectant ce format structuré et en reconstruisant une phrase naturelle
-  // à partir de la catégorie + l'USP — repli sur l'ancien comportement (troncature brute) quand
-  // le texte est une VRAIE description libre (saisie par l'utilisateur, ou analyse non conforme
-  // au format JSON attendu), cas où il n'y a pas de labels à extraire.
-  private buildFallbackNarration(creativeConcept: CreativeConcept, description: string): string {
-    // Priorité au Creative Concept (hook + message central + CTA) — déjà pensé comme une
-    // publicité, pas une fiche produit. Les 3 champs sont joints TELS QUELS (pas de troncature
-    // "1ère phrase" via truncateForNarration : ça couperait juste après le hook si celui-ci se
-    // termine par une ponctuation forte, perdant le message central ET le CTA — exactement le
-    // bug corrigé ici). Un plafond global généreux (280 caractères, ~3 phrases courtes) reste
-    // appliqué en dur pour éviter une narration démesurée si l'IA a produit des champs longs.
-    const parts = [creativeConcept.hook, creativeConcept.coreMessage, creativeConcept.cta]
-      .map((s) => s?.trim())
-      .filter((s): s is string => !!s);
-    if (parts.length > 0) {
-      const joined = parts.join('. ').replace(/\.\.\s*/g, '. ').replace(/\s+/g, ' ').trim();
-      return joined.length > 280 ? `${joined.slice(0, 280).trim()}…` : joined;
-    }
-
-    // Repli ultime si creativeConcept n'a produit aucun champ exploitable (échec de parsing IA,
-    // cf. CreativeConceptService — jamais un throw, juste des champs vides) : comportement
-    // historique inchangé, à partir de la description produit brute.
-    const category = /^Catégorie détectée\s*:\s*(.+)$/m.exec(description)?.[1]?.trim();
-    const usp = /^USP\s*:\s*(.+)$/m.exec(description)?.[1]?.trim();
-    if (category && usp && category !== 'non déterminée' && usp !== 'non déterminée') {
-      return `Découvrez notre ${category} : ${this.truncateForNarration(usp, 100)}.`;
-    }
-    return `Découvrez ${this.truncateForNarration(description)}.`;
   }
 
   // Correction de l'audit du 2026-08-13 : rendre la vidéo obligatoire pour CHAQUE campagne
@@ -753,6 +950,9 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
     referenceImageUrl: string,
     visualDnaResult: VisualDna,
     organizationId: string,
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 4) — thread jusqu'à
+    // ShotExecutionCompiler via generateSingleShot/serializeShotToPrompt/repairShotPrompt.
+    context: ShotExecutionContext,
   ): Promise<{ video: AiGenerationResult | null; videoClips: VideoClip[]; perShotQuality: Map<string, ShotQualityResult> }> {
     // Phase I (chantier V2, spec Section 57) — génère les scènes les plus importantes pour le
     // message publicitaire EN PREMIER (hook, démonstration produit, CTA/payoff), pas dans l'ordre
@@ -795,7 +995,7 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
       }
 
       const settled = await Promise.allSettled(
-        toLaunch.map((shot) => this.generateSingleShot(ctx, shot, referenceImageUrl, visualDnaResult, organizationId, shotPlan.length)),
+        toLaunch.map((shot) => this.generateSingleShot(ctx, shot, referenceImageUrl, visualDnaResult, organizationId, shotPlan.length, context)),
       );
 
       // Audit forensic (campagne réelle 1c41d0d0-7b13-4530-9238-244188fad73a, 2026-08-20) — un
@@ -832,7 +1032,7 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
         // generateSingleShot gère déjà proprement le quota (renvoie quotaExhausted plutôt que de
         // lever) — aucune vérification de slotsRemaining nécessaire avant cette tentative.
         const recovered = await Promise.allSettled(
-          failedShots.map((shot) => this.generateSingleShot(ctx, shot, referenceImageUrl, visualDnaResult, organizationId, shotPlan.length)),
+          failedShots.map((shot) => this.generateSingleShot(ctx, shot, referenceImageUrl, visualDnaResult, organizationId, shotPlan.length, context)),
         );
         for (let i = 0; i < recovered.length; i++) {
           const result = recovered[i];
@@ -942,8 +1142,9 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
     visualDnaResult: VisualDna,
     organizationId: string,
     totalShots: number,
+    context: ShotExecutionContext,
   ): Promise<{ sceneId: string; clip: AiGenerationResult; quality: ShotQualityResult | null } | { sceneId: string; quotaExhausted: true }> {
-    let currentPrompt = this.videoDirector.serializeShotToPrompt(shot);
+    let currentPrompt = this.videoDirector.serializeShotToPrompt(shot, context);
     let best: AiGenerationResult | null = null;
     let bestQuality: ShotQualityResult | null = null;
 
@@ -968,7 +1169,7 @@ Consignes : image publicitaire professionnelle et photoréaliste, mise en scène
         // Repair Loop intelligent (2026-08-18) : la régénération n'est plus un tirage
         // aléatoire du MÊME prompt — le prompt du 2e essai cible précisément la cause de
         // l'échec (mouvement et/ou fidélité), cf. VideoDirectorService.repairShotPrompt.
-        currentPrompt = this.videoDirector.repairShotPrompt(shot, quality);
+        currentPrompt = this.videoDirector.repairShotPrompt(shot, quality, context);
       } catch (error) {
         if (error instanceof PlanLimitExceededException) {
           const payload = error.getResponse() as PlanLimitExceededPayload;
@@ -1069,6 +1270,7 @@ Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact {"categor
     strategyContent: string,
     hints: GenerateCampaignParams['templateHints'],
     creativeConcept: CreativeConcept,
+    narrativeBlueprint: NarrativeBlueprint,
   ): Promise<AiGenerationResult> {
     // Contexte de marque propre à CE canal (Phase 6) — les règles/apprentissages spécifiques
     // à Instagram n'ont aucune raison de s'appliquer tels quels sur LinkedIn, et inversement ;
@@ -1079,7 +1281,7 @@ Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact {"categor
       persona: hints?.personaArchetype,
     });
 
-    const prompt = this.buildChannelPrompt(channel, params, strategyContent, hints, channelBrandContext.text, creativeConcept);
+    const prompt = this.buildChannelPrompt(channel, params, strategyContent, hints, channelBrandContext.text, creativeConcept, narrativeBlueprint);
     // LinkedIn (argumentation B2B) bénéficie du même modèle que la stratégie — raisonnement
     // structuré plutôt que le modèle économique utilisé pour les formats courts/visuels.
     const provider = channel === 'linkedin' ? 'anthropic' : 'openai';
@@ -1103,6 +1305,7 @@ Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact {"categor
     hints: GenerateCampaignParams['templateHints'],
     brandContextText: string,
     creativeConcept: CreativeConcept,
+    narrativeBlueprint: NarrativeBlueprint,
   ): string {
     const toneHint = hints?.toneHint ? `\nTon à adopter : ${hints.toneHint}` : '';
     const ctaHint = hints?.ctaStyle ? `\nStyle d'appel à l'action : ${hints.ctaStyle}` : '';
@@ -1111,17 +1314,22 @@ Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact {"categor
     // ce bloc, ce prompt ne recevait QUE la stratégie marketing générique, jamais le Creative
     // Concept spécifique déjà utilisé pour générer le Shot Plan/la vidéo (cf.
     // VideoDirectorService.generateShotPlan, qui LUI reçoit bien creativeConcept). Deux pipelines
-    // créatifs indépendants : le script TikTok (source de la narration finale, cf.
-    // scriptToNarration ci-dessous) était rédigé sans connaître le hook, la structure narrative
-    // ou la direction émotionnelle réellement filmés — d'où des voix off génériques ("inventaire
-    // de caractéristiques produit") qui contredisaient systématiquement le concept que le Video
-    // Judge évalue. Résultat réel confirmé sur 2 campagnes (storytelling/hookStrength/pacing/
-    // brandCoherence/advertisingEffectiveness tous en défaut CRITIQUE pour la même raison).
+    // créatifs indépendants : le script TikTok (source de la narration finale AVANT Mission 4.3
+    // Phase 3, cf. buildNarrationFromBlueprint aujourd'hui) était rédigé sans connaître le hook,
+    // la structure narrative ou la direction émotionnelle réellement filmés — d'où des voix off
+    // génériques ("inventaire de caractéristiques produit") qui contredisaient systématiquement
+    // le concept que le Video Judge évalue. Résultat réel confirmé sur 2 campagnes (storytelling/
+    // hookStrength/pacing/brandCoherence/advertisingEffectiveness tous en défaut CRITIQUE pour la
+    // même raison).
     const conceptBlock = `\n\nConcept créatif retenu (l'exécution DOIT suivre cette idée précise, jamais un inventaire générique de caractéristiques produit) :\nTitre : ${creativeConcept.title}\nAccroche (hook) : ${creativeConcept.hook}\nMessage central : ${creativeConcept.coreMessage}\nApproche narrative : ${creativeConcept.storytellingApproach}\nDirection émotionnelle : ${creativeConcept.emotionalDirection}`;
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 3, Étape 4) — chaque canal, pas
+    // seulement TikTok, écrit désormais sa copie en cohérence avec la MÊME structure narrative
+    // que la narration/le Shot Plan, plutôt que de réinventer indépendamment sa propre histoire.
+    const narrativeBlueprintBlock = `\n\nStructure narrative de référence (le texte doit s'inscrire dans cette progression, jamais la réinventer) :\nHook : ${narrativeBlueprint.hook}\nProblème : ${narrativeBlueprint.problem}\nBénéfice : ${narrativeBlueprint.benefit}\nPreuve : ${narrativeBlueprint.proof}\nCTA : ${narrativeBlueprint.cta}`;
     // Objectif explicite en tête (chantier "prompts précis, orientés objectif" du 2026-08-18) :
     // auparavant présent seulement INDIRECTEMENT, noyé dans strategyContent — un modèle ne
     // devrait pas avoir à l'en déduire alors qu'il est disponible tel quel.
-    const base = `Objectif de la campagne : ${params.objective}\nStratégie marketing de référence :\n${strategyContent}${toneHint}${ctaHint}\n\nProduit : ${params.productDescription}${conceptBlock}${brandContextBlock}`;
+    const base = `Objectif de la campagne : ${params.objective}\nStratégie marketing de référence :\n${strategyContent}${toneHint}${ctaHint}\n\nProduit : ${params.productDescription}${conceptBlock}${narrativeBlueprintBlock}${brandContextBlock}`;
 
     switch (channel) {
       case 'instagram':
@@ -1134,16 +1342,15 @@ Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact {"categor
         return `${base}\n\nRédige une publication LinkedIn B2B : ton professionnel et argumenté, structuré autour d'un problème métier concret puis de la solution apportée, chiffres ou preuves si pertinent, pas d'emoji excessif, conclusion avec une invitation à l'échange plutôt qu'un simple lien.`;
 
       case 'tiktok':
-        // Format "Visuel: ... | Voix off: ..." par plan — corrige un défaut où "Plan 1 —
-        // description de l'action à l'écran" ne produisait que des indications de mise en scène
-        // (rien à lire à voix haute), alors que la contrainte "15 à 30 secondes à l'oral"
-        // ci-dessous supposait l'inverse. Résultat constaté en conditions réelles le 2026-08-16 :
-        // scriptToNarration() ne retirant QUE les lignes "Plan N —", il ne restait plus que le
-        // hook (une phrase, ~3s) comme texte parlé — vidéo finale bien plus courte que prévu,
-        // alignée sur cette narration tronquée (cf. VideoAssemblyService, finalDuration =
-        // narrationDuration). Séparer explicitement mise en scène et texte à dire permet à
-        // scriptToNarration() de reconstituer une narration complète couvrant la durée demandée.
-        return `${base}\n\nRédige un script vidéo TikTok au format suivant, à respecter STRICTEMENT :\n\nHook: <accroche des 2 premières secondes, une seule phrase très courte et percutante, jamais plus de 10 mots — c'est aussi la première phrase dite par la voix off>\n\nPlan 1 — Visuel: <description de l'action à l'écran> | Voix off: <phrase à dire à voix haute pendant ce plan, ton publicitaire naturel, jamais une description de l'image>\nPlan 2 — Visuel: ... | Voix off: ...\nPlan 3 — Visuel: ... | Voix off: ...\n(3 à 4 plans au total)\n\nLe Hook et l'ensemble des répliques "Voix off" mis bout à bout doivent durer entre 15 et 30 secondes à l'oral (environ 40 à 80 mots au total) — c'est cette partie, et UNIQUEMENT elle, qui sera lue par la voix off finale de la vidéo. IMPORTANT : le Hook et les répliques "Voix off" DOIVENT suivre l'approche narrative du concept créatif ci-dessus (${creativeConcept.storytellingApproach}) — jamais un simple inventaire de caractéristiques produit énumérées les unes après les autres, même si chaque caractéristique individuelle est correcte.`;
+        // Format "Visuel: ... | Voix off: ..." par plan — corrige un défaut historique où "Plan 1
+        // — description de l'action à l'écran" ne produisait que des indications de mise en scène
+        // (rien à lire à voix haute). Depuis Mission 4.3 Phase 3, ce script TikTok n'est PLUS la
+        // source de la narration finale de la vidéo (celle-ci dérive directement du
+        // NarrativeBlueprint, cf. buildNarrationFromBlueprint) — le format Visuel/Voix off reste
+        // néanmoins exigé pour la cohérence interne du post TikTok lui-même (texte réellement dit
+        // à voix haute vs. simple mise en scène), et pour rester alignée avec la structure
+        // narrative de référence déjà injectée dans `base` (narrativeBlueprintBlock).
+        return `${base}\n\nRédige un script vidéo TikTok au format suivant, à respecter STRICTEMENT :\n\nHook: <accroche des 2 premières secondes, une seule phrase très courte et percutante, jamais plus de 10 mots>\n\nPlan 1 — Visuel: <description de l'action à l'écran> | Voix off: <phrase à dire à voix haute pendant ce plan, ton publicitaire naturel, jamais une description de l'image>\nPlan 2 — Visuel: ... | Voix off: ...\nPlan 3 — Visuel: ... | Voix off: ...\n(3 à 4 plans au total)\n\nLe Hook et l'ensemble des répliques "Voix off" mis bout à bout doivent durer entre 15 et 30 secondes à l'oral (environ 40 à 80 mots au total) et raconter FIDÈLEMENT la structure narrative de référence ci-dessus — jamais une histoire différente de celle de la vidéo finale. IMPORTANT : le Hook et les répliques "Voix off" DOIVENT suivre l'approche narrative du concept créatif ci-dessus (${creativeConcept.storytellingApproach}) — jamais un simple inventaire de caractéristiques produit énumérées les unes après les autres, même si chaque caractéristique individuelle est correcte.`;
 
       case 'googleads':
         return `${base}\n\nRédige une annonce Google Ads Search au format responsive. Réponds UNIQUEMENT en JSON strict, sans texte autour, au format exact {"headlines":["...","...","..."],"descriptions":["...","..."]}. Contraintes strictes et non négociables : chaque titre ("headline") fait 30 caractères MAXIMUM espaces compris, chaque description fait 90 caractères MAXIMUM espaces compris. Génère exactement 3 titres et 2 descriptions, tous différents les uns des autres, sans jamais dépasser ces limites.`;

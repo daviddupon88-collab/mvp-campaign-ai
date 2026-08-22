@@ -67,7 +67,7 @@ describe('evaluateFinalDelivery', () => {
     expect(result.blockingReasons.length).toBeGreaterThanOrEqual(2);
   });
 
-  describe('Audit forensique Mission 4.2 (P0-4) — livraison partielle (moins de plans livrés que planifiés)', () => {
+  describe('Mission 4.3 (Étape 14/18) — livraison partielle, tolérance ZÉRO (supersède la tolérance 50% de Mission 4.2 P0-4)', () => {
     it('tous les plans livrés : partialDelivery=false, jamais bloquant', () => {
       const result = evaluateFinalDelivery(buildInput({ plannedShotCount: 4, deliveredShotCount: 4 }));
 
@@ -75,15 +75,23 @@ describe('evaluateFinalDelivery', () => {
       expect(result.deliverable).toBe(true);
     });
 
-    it("3 plans livrés sur 4 planifiés (au-dessus du seuil de tolérance) : partialDelivery=true MAIS jamais bloquant automatiquement — les gates normaux (Judge/Storyboard/Creative) restent seuls juges, conformément à la correction obligatoire de cette même mission", () => {
+    it('9 plans livrés sur 10 planifiés (bien au-dessus de l\'ancien seuil de tolérance 50%) : deliverable=false quand même — la logique de ratio a disparu, tout manquant bloque', () => {
+      const result = evaluateFinalDelivery(buildInput({ plannedShotCount: 10, deliveredShotCount: 9 }));
+
+      expect(result.partialDelivery).toBe(true);
+      expect(result.deliverable).toBe(false);
+      expect(result.blockingReasons.some((r) => r.includes('9/10'))).toBe(true);
+    });
+
+    it('3 plans livrés sur 4 planifiés : deliverable=false, raison explicite citant le ratio', () => {
       const result = evaluateFinalDelivery(buildInput({ plannedShotCount: 4, deliveredShotCount: 3 }));
 
       expect(result.partialDelivery).toBe(true);
-      expect(result.deliverable).toBe(true);
-      expect(result.blockingReasons).toEqual([]);
+      expect(result.deliverable).toBe(false);
+      expect(result.blockingReasons.some((r) => r.includes('3/4'))).toBe(true);
     });
 
-    it('1 plan livré sur 5 planifiés (sous le seuil de tolérance) : deliverable=false, raison explicite citant le ratio', () => {
+    it('1 plan livré sur 5 planifiés : deliverable=false, raison explicite citant le ratio', () => {
       const result = evaluateFinalDelivery(buildInput({ plannedShotCount: 5, deliveredShotCount: 1 }));
 
       expect(result.partialDelivery).toBe(true);

@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import * as Sentry from '@sentry/node';
 import { RequestContextService } from '../logging/request-context.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { recordActivity } from './process-health';
 
 // Filtre global : capture TOUTE exception non gérée, l'envoie à Sentry (si configuré) avec
 // le requestId en contexte pour pouvoir corréler une alerte Sentry avec les logs structurés
@@ -28,6 +29,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const isHttpException = exception instanceof HttpException;
     const status = isHttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
     const responseBody = isHttpException ? exception.getResponse() : 'Erreur interne du serveur';
+
+    // Stabilisation infrastructure (Mission 4.5) — coût négligeable (en mémoire uniquement,
+    // jamais d'écriture disque ici), donc jamais restreint aux 5xx contrairement à Sentry/DB
+    // ci-dessous : un 401 JWT expiré/invalide est explicitement demandé dans l'observabilité
+    // (passport-jwt rejette AVANT JwtStrategy.validate(), donc ce filtre est le seul point de
+    // passage commun pour ce cas précis).
+    recordActivity('http_exception', { status, path: request.url, message: exception instanceof Error ? exception.message : String(exception) });
 
     // Seules les erreurs serveur (5xx) partent vers Sentry — une 404 ou une validation
     // 400 est un comportement attendu de l'API, pas un incident à investiguer.

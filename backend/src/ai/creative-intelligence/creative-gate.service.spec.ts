@@ -3,6 +3,7 @@ import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PromptEngineService } from '../prompt-engine/prompt-engine.service';
 import { CreativeIntelligence } from './creative-intelligence.types';
 import { CreativeConcept } from './creative-concept.types';
+import { QualityTarget } from '../quality/quality-target';
 
 const CTX = { organizationId: 'org-1', campaignId: 'camp-1', purpose: 'campaign_generation' as const };
 const promptEngine = new PromptEngineService();
@@ -40,15 +41,20 @@ const INTELLIGENCE: CreativeIntelligence = {
 const CONCEPT: CreativeConcept = {
   title: 't', concept: 'c', coreMessage: 'La visibilité sauve des vies', hook: 'Un chantier plongé dans le noir',
   emotionalDirection: 'e', visualDirection: 'v', storytellingApproach: 's', proofStrategy: 'p',
-  cta: 'Commandez la vôtre', targetAudience: 'Ouvriers du BTP', duration: 15, format: '9:16', scenesCount: 3, raw: '{}',
+  cta: 'Commandez la vôtre', targetAudience: 'Ouvriers du BTP', duration: 15, format: '9:16', scenesCount: 3, qualityAlignment: '', raw: '{}',
 };
 
-function buildParams(overrides: { intelligence?: CreativeIntelligence; concept?: CreativeConcept } = {}) {
+// Mission 4.3 (Goal-First Quality Architecture, Phase 1) — QualityTarget de test, criticalCriteria
+// vide pour ne pas changer le contenu du prompt attendu par les tests existants ci-dessous.
+const TARGET: QualityTarget = { targetScore: 75, version: 'test-v1', criticalCriteria: [], minimumCriticalScore: 60, prohibitedConditions: [] };
+
+function buildParams(overrides: { intelligence?: CreativeIntelligence; concept?: CreativeConcept; qualityTarget?: QualityTarget } = {}) {
   return {
     creativeIntelligence: overrides.intelligence ?? INTELLIGENCE,
     creativeConcept: overrides.concept ?? CONCEPT,
     objective: 'Générer des ventes',
     productProfile: null,
+    qualityTarget: overrides.qualityTarget ?? TARGET,
   };
 }
 
@@ -113,6 +119,53 @@ describe('CreativeGateService.evaluate', () => {
     await service.evaluate(CTX, buildParams());
 
     const [, , , promptVersion] = (gateway.generateText as jest.Mock).mock.calls[0];
-    expect(promptVersion).toBe('creative-gate-v1');
+    expect(promptVersion).toBe('creative-gate-v2');
+  });
+
+  // Bug réel constaté en conditions réelles (2026-08-21, hors du chantier Mission 4.3 Phase 5b-7
+  // mais du même ordre) : sans maxTokens explicite, ce call retombait sur le défaut 4000 de
+  // AnthropicProvider — insuffisant pour ce schéma de sortie à 11 champs (plusieurs listes de
+  // texte), la réponse était tronquée avant la fin du JSON ("Unterminated string in JSON"),
+  // rejetée à tort comme REVISE/score neutre.
+  it('demande un budget de tokens généreux (8000), pas le défaut 4000 — évite la troncature JSON', async () => {
+    const gateway = buildGatewayMock();
+    const service = new CreativeGateService(gateway, promptEngine);
+
+    await service.evaluate(CTX, buildParams());
+
+    const [, requestParams] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(requestParams.maxTokens).toBe(8000);
+  });
+
+  // Audit forensic (2026-08-22) — même discipline retry-avant-repli que
+  // VideoDirectorService.generateShotPlanWithRetry/NarrativeBlueprintService/StoryboardGateService :
+  // un seul JSON mal formé ne doit jamais consommer à tort l'unique régénération de concept de
+  // AiOrchestratorService.
+  it('1er essai JSON invalide, 2e essai exploitable : retourne le résultat de la 2e tentative, jamais le repli neutre', async () => {
+    const gateway = {
+      generateText: jest.fn()
+        .mockResolvedValueOnce({ content: 'Désolé, je ne peux pas évaluer.', provider: 'anthropic', model: 'claude-sonnet-5', durationMs: 10 })
+        .mockResolvedValueOnce({ content: JSON.stringify(defaultResponse()), provider: 'anthropic', model: 'claude-sonnet-5', durationMs: 10 }),
+    } as unknown as AiGatewayService;
+    const service = new CreativeGateService(gateway, promptEngine);
+
+    const result = await service.evaluate(CTX, buildParams());
+
+    expect(gateway.generateText as jest.Mock).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe('APPROVED');
+    expect(result.score).toBe(85);
+  });
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 1) — preuve que le seuil n'est plus une
+  // constante figée (CREATIVE_GATE_THRESHOLD) mais une donnée du QualityTarget transmis.
+  it('le score cible est piloté par QualityTarget.targetScore, jamais une constante figée', async () => {
+    const gateway = buildGatewayMock(JSON.stringify(defaultResponse({ score: 78, verdict: 'APPROVED' })));
+    const service = new CreativeGateService(gateway, promptEngine);
+
+    const stricter = await service.evaluate(CTX, buildParams({ qualityTarget: { ...TARGET, targetScore: 80 } }));
+    expect(stricter.status).toBe('REVISE');
+
+    const looser = await service.evaluate(CTX, buildParams({ qualityTarget: { ...TARGET, targetScore: 75 } }));
+    expect(looser.status).toBe('APPROVED');
   });
 });

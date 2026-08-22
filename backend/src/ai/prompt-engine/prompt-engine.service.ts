@@ -10,6 +10,8 @@ import { repairTemplate, RepairContext } from './templates/repair.template';
 import { creativeVariationTemplate, CreativeVariationContext } from './templates/creative-variation.template';
 import { creativeGateTemplate, CreativeGateContext } from './templates/creative-gate.template';
 import { storyboardGateTemplate, StoryboardGateContext } from './templates/storyboard-gate.template';
+import { narrativeBlueprintTemplate, NarrativeBlueprintContext } from './templates/narrative-blueprint.template';
+import { productPageExtractionTemplate, ProductPageExtractionContext } from './templates/product-page-extraction.template';
 
 // P0.5 — Prompt Engine V2. Registre de templates typés par tâche (PromptTask), chacun assemblant
 // role/mission/constraints/outputSchema en un prompt final via render(context). Portée assumée
@@ -29,6 +31,8 @@ export class PromptEngineService {
     [PromptTask.CREATIVE_VARIATION, creativeVariationTemplate],
     [PromptTask.CREATIVE_GATE, creativeGateTemplate],
     [PromptTask.STORYBOARD_GATE, storyboardGateTemplate],
+    [PromptTask.NARRATIVE_BLUEPRINT, narrativeBlueprintTemplate],
+    [PromptTask.PRODUCT_PAGE_EXTRACTION, productPageExtractionTemplate],
   ]);
 
   render(task: PromptTask.PRODUCT_ANALYSIS, context: ProductAnalysisContext): string;
@@ -40,6 +44,8 @@ export class PromptEngineService {
   render(task: PromptTask.CREATIVE_VARIATION, context: CreativeVariationContext): string;
   render(task: PromptTask.CREATIVE_GATE, context: CreativeGateContext): string;
   render(task: PromptTask.STORYBOARD_GATE, context: StoryboardGateContext): string;
+  render(task: PromptTask.NARRATIVE_BLUEPRINT, context: NarrativeBlueprintContext): string;
+  render(task: PromptTask.PRODUCT_PAGE_EXTRACTION, context: ProductPageExtractionContext): string;
   render(task: PromptTask, context: unknown): string {
     const template = this.templates.get(task);
     if (!template) {

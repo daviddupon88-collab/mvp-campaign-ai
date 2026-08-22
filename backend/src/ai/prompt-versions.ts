@@ -9,7 +9,7 @@ export const PROMPT_VERSIONS = {
   channelCopy: 'channel-copy-v3', // v3 : injection du Creative Concept (hook/storytellingApproach/emotionalDirection) — audit forensic campagne 5345726a, 2026-08-20
   visual: 'visual-v2', // v2 : réécriture complète (objectif + stratégie + consignes de composition)
   visualDna: 'visual-dna-v1',
-  shotPlan: 'shot-plan-v2', // v2 : ajout du champ objective dédié
+  shotPlan: 'shot-plan-v4', // v4 : audit forensic (2026-08-22, campagnes réelles) — v3 ajoutait l'alignement visuel/verbal + complétude ADN visuel + fidélité au beat ; v4 ajoute la règle SHOW > TELL explicite pour proofElement (dernier maillon de la chaîne proofToShow -> proofStrategy -> requiredVisualEvidence -> proofElement, jusqu'ici seul maillon sans consigne propre)
   visualFidelity: 'visual-fidelity-v1',
   moderationMisleadingClaims: 'moderation-misleading-claims-v1',
   moderationTrademark: 'moderation-trademark-v1',
@@ -25,13 +25,18 @@ export const PROMPT_VERSIONS = {
   productIdentification: 'product-identification-v1',
   // Creative Intelligence Engine & Video Quality Loop (2026-08-18).
   creativeBrief: 'creative-brief-v1',
-  videoConcept: 'video-concept-v1',
-  videoJudge: 'video-judge-v2', // v2 : clarification advertisingEffectiveness (Phase D, chantier V2 — sous-score publicitaire distinct de l'esthétique)
+  videoConcept: 'video-concept-v3', // v3 : audit forensic (2026-08-22, campagnes réelles) — règle SHOW > TELL réaffirmée explicitement pour proofStrategy (se diluait en affirmation verbale entre proofToShow et proofStrategy, corrompant toute la chaîne en aval)
+  videoJudge: 'video-judge-v3', // v3 : Mission 4.3 Phase 6c — comparaison attendu (NarrativeBlueprint.beats) vs réel (transcript), plus un jugement esthétique isolé
   productVisibilityFinal: 'product-visibility-final-v1',
   repairGrammar: 'repair-grammar-v2', // v2 : escalade (priorAttemptFailed) — Phase B, chantier V2, 2026-08-19
   creativeVariation: 'creative-variation-v1',
-  creativeGate: 'creative-gate-v1',
-  storyboardGate: 'storyboard-gate-v1',
+  creativeGate: 'creative-gate-v2', // v2 : Mission 4.3 Phase 2 — qualityRequirementsBlock (seuil piloté par QualityTarget, plus une constante figée)
+  storyboardGate: 'storyboard-gate-v3', // v3 : Mission 4.3 Phase 5b — fusion PreProductionQualityJudge (criterionScores/blockingDefects/risks/requiredChanges/rootCauseLevel, NarrativeBlueprint + instructions d'exécution compilées + grounding produit)
   // Mission 4 Phase B ("Creative Video & Audio Intelligence", 2026-08-20).
   sceneConsistency: 'scene-consistency-v1',
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 3, Étape 4).
+  narrativeBlueprint: 'narrative-blueprint-v3',
+  // Mission 4.4 (Product URL Intelligence, Phase H) — repli LLM, invoqué seulement quand
+  // l'extraction déterministe (JSON-LD/OpenGraph/HTML) est insuffisante.
+  productPageExtraction: 'product-page-extraction-v1', // v3 : audit forensic (2026-08-22, campagnes réelles) — v2 plafonnait beats.length à scenesCount ; v3 ajoute la règle SHOW > TELL explicite pour requiredVisualEvidence (héritait à tort de la consigne "prêt à voix haute" destinée aux champs narratifs top-level, produisant des preuves visuelles qui n'étaient en réalité que des phrases à prononcer)
 } as const;

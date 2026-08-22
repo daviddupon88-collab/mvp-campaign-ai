@@ -17,19 +17,23 @@ import { VideoAnalyzerService } from './video-direction/video-analyzer.service';
 import { ProductVisionAnalysisService } from './product-intelligence/product-vision-analysis.service';
 import { ProductIdentificationService } from './product-intelligence/product-identification.service';
 import { ProductIntelligenceService } from './product-intelligence/product-intelligence.service';
+import { ProductIntelligenceFusionService } from './product-intelligence/product-intelligence-fusion.service';
+import { SafeProductPageFetcherService } from './product-intelligence/product-page/safe-product-page-fetcher.service';
+import { ProductPageLlmExtractorService } from './product-intelligence/product-page/product-page-llm-extractor.service';
 import { PromptEngineService } from './prompt-engine/prompt-engine.service';
 import { MockWebResearchProvider } from './web-research/mock-web-research.provider';
 import { FactVerificationService } from './web-research/fact-verification.service';
 import { WebResearchService } from './web-research/web-research.service';
 import { CreativeIntelligenceService } from './creative-intelligence/creative-intelligence.service';
 import { CreativeConceptService } from './creative-intelligence/creative-concept.service';
+import { NarrativeBlueprintService } from './creative-intelligence/narrative-blueprint.service';
 import { VideoJudgeService } from './video-judge/video-judge.service';
 import { VideoQualityLoopService } from './video-judge/video-quality-loop.service';
 import { CreativeGenerationTraceService } from './video-judge/creative-generation-trace.service';
 import { CreativeVariationService } from './creative-intelligence/creative-variation.service';
 import { CreativeGateService } from './creative-intelligence/creative-gate.service';
 import { StoryboardGateService } from './video-direction/storyboard-gate.service';
-import { PipelineMetricsService } from './video-judge/pipeline-metrics.service';
+import { PipelineMetricsService, CampaignComparisonService } from './video-judge/pipeline-metrics.service';
 
 // Le worker qui consomme la queue de génération (CampaignGenerationProcessor) vit
 // désormais dans CampaignOrchestrationModule, pas ici : il a besoin à la fois de
@@ -63,6 +67,11 @@ import { PipelineMetricsService } from './video-judge/pipeline-metrics.service';
     ProductVisionAnalysisService,
     ProductIdentificationService,
     ProductIntelligenceService,
+    // Mission 4.4 (Product URL Intelligence) — cf. plan dédié. Même convention : déclaré
+    // directement ici, pas de sous-module.
+    SafeProductPageFetcherService,
+    ProductPageLlmExtractorService,
+    ProductIntelligenceFusionService,
     // Web Research (P1, 2026-08-18) : architecture prête, AUCUN fournisseur réel sélectionné —
     // règle absolue du brief. MockWebResearchProvider est enregistré comme provider Nest
     // ORDINAIRE (utilisable dans les tests d'intégration futurs) mais n'est JAMAIS lié au token
@@ -76,6 +85,9 @@ import { PipelineMetricsService } from './video-judge/pipeline-metrics.service';
     // convention que Product Intelligence : déclaré directement ici, pas de sous-module.
     CreativeIntelligenceService,
     CreativeConceptService,
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — cf. plan dédié. Même convention :
+    // déclaré directement ici, pas de sous-module.
+    NarrativeBlueprintService,
     VideoJudgeService,
     VideoQualityLoopService,
     CreativeGenerationTraceService,
@@ -90,7 +102,19 @@ import { PipelineMetricsService } from './video-judge/pipeline-metrics.service';
     // qu'un futur contrôleur (suivant le pattern déjà établi par AiEconomicsController) puisse
     // l'exposer sans réenregistrer ce provider.
     PipelineMetricsService,
+    // Mission 4.5 (préparation Phases 3-11) — lecture seule, aucun appel IA : croise
+    // Campaign/CreativeGenerationTrace/AiGeneration en une ligne comparable par campagne pour la
+    // collecte des 5+5 campagnes contrôle/URL, cf. pipeline-metrics.service.ts.
+    CampaignComparisonService,
   ],
-  exports: [AiGatewayService, AiOrchestratorService, VideoQualityLoopService, CreativeGenerationTraceService, CreativeVariationService, PipelineMetricsService],
+  exports: [
+    AiGatewayService,
+    AiOrchestratorService,
+    VideoQualityLoopService,
+    CreativeGenerationTraceService,
+    CreativeVariationService,
+    PipelineMetricsService,
+    CampaignComparisonService,
+  ],
 })
 export class AiModule {}

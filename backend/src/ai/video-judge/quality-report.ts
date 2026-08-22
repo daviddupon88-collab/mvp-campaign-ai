@@ -4,6 +4,7 @@ import { classifyRepair, RepairScope, repairScopeForStrategy } from './repair-di
 import { computeSeverity, computePriority, strategyCost } from './repair-priority';
 import { RootCauseLevel, classifyRootCause } from './root-cause';
 import { classifyMotionLevel, MotionLevel } from '../video-direction/video-analyzer.service';
+import { GoalFirstRootCause } from '../video-direction/storyboard-gate.types';
 
 // Phase F — Rapport structuré obligatoire (chantier "Moteur d'optimisation de la qualité vidéo
 // — V2", 2026-08-19, spec Section 31, 21-22). Fonction PURE : dérive le rapport des données déjà
@@ -36,6 +37,12 @@ export interface StructuredQualityReport {
   totalCredits?: number;
   elapsedMs?: number;
   rootCause?: RootCauseLevel | null;
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 6b, Étape 23) — projection de `rootCause`
+  // (12 catégories post-vidéo) vers le vocabulaire 7 catégories du Storyboard
+  // Gate/PreProductionQualityJudge (Phase 5b, cf. root-cause.ts::projectToGoalFirstRootCause) —
+  // renseigné par l'appelant (CampaignGenerationProcessor), même convention que `rootCause`
+  // lui-même (buildQualityReport est une fonction pure, ne le calcule pas ici).
+  goalFirstRootCause?: GoalFirstRootCause | null;
   escalationLevel?: 'SCENE' | 'STORYBOARD' | 'CONCEPT';
   stopReason?: string;
   timeBudgetStatus?: TimeBudgetStatus;

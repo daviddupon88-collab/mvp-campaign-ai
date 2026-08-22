@@ -5,6 +5,8 @@ import { VisualDna } from './visual-dna.service';
 import { ShotQualityResult } from './video-analyzer.service';
 import { PROMPT_VERSIONS } from '../prompt-versions';
 import { CreativeConcept } from '../creative-intelligence/creative-concept.types';
+import { NarrativeBeat, NarrativeBlueprint } from '../creative-intelligence/narrative-blueprint.types';
+import { compileShotExecutionInstruction, compileShotRepairInstruction, ShotExecutionContext } from './shot-execution-compiler';
 
 // Un plan (shot) de la vidéo finale — direction artistique structurée, jamais un simple prompt
 // texte libre. C'est ce qui sépare la RÉFLEXION créative (cette structure) de l'EXÉCUTION (Veo,
@@ -29,6 +31,13 @@ export interface Shot {
   // : un Shot sans ce champ (ancien code, tests existants, DEFAULT_SHOT_PLAN avant ce chantier)
   // reste valide, serializeShotToPrompt() n'ajoute simplement pas la ligne de contexte narratif.
   narrativeRole?: string;
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 5) — référence l'id d'un
+  // NarrativeBlueprint.beats[] (cf. narrative-blueprint.types.ts), demandé au LLM au même titre
+  // que narrativeRole. Contrairement à narrativeRole (texte libre), permet un lien STRUCTURÉ vers
+  // la preuve visuelle attendue par ce beat précis (cf. ShotExecutionCompiler) et le regroupement
+  // déterministe shot->beat (cf. linkBeatsToShots ci-dessous). Optionnel/additif : absent = plan
+  // non rattaché à un beat précis (jamais une erreur).
+  narrativeBeatId?: string;
   // Identifiant stable de CE plan — TOUJOURS assigné déterministiquement en code (`shot-${i+1}`),
   // JAMAIS confié au LLM (cf. tryParseShotPlan) : c'est la clé utilisée par le Video Judge, le
   // Repair Dispatch et la trace d'observabilité pour référencer "quel plan précisément".
@@ -87,7 +96,11 @@ export interface GenerateShotPlanParams {
   productDescription: string;
   objective: string; // objectif de campagne — champ dédié plutôt que noyé dans campaignContext, pour rester explicite même si la stratégie est longue (chantier "prompts précis, orientés objectif" du 2026-08-18)
   campaignContext: string; // texte de stratégie déjà généré — ancre le Shot Plan dans l'angle marketing retenu, pas une improvisation déconnectée
-  narrationHint?: string; // narration déjà calculée (voir AiOrchestratorService) — aide au rythme/nombre de plans, jamais lu tel quel par Veo
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — remplace l'ancien narrationHint (texte
+  // plat) : la structure narrative complète (beats, pacing) aide au rythme/nombre de plans, jamais
+  // lue telle quelle par Veo. Toujours disponible (calculé avant le Shot Plan dans tous les
+  // chemins d'appel), donc obligatoire — jamais optionnel comme l'ancien narrationHint.
+  narrativeBlueprint: NarrativeBlueprint;
   // NOUVEAU (P0.3) : le Shot Plan est désormais ANCRÉ sur une vraie idée publicitaire plutôt que
   // généré depuis des paramètres bruts — pilote aussi shotCount (scenesCount du concept).
   creativeConcept: CreativeConcept;
@@ -149,7 +162,15 @@ export class VideoDirectorService {
 
   async generateShotPlan(ctx: AiCallContext, params: GenerateShotPlanParams): Promise<ShotPlan> {
     const shotCount = params.creativeConcept.scenesCount;
-    const narrationBlock = params.narrationHint ? `\nNarration prévue (pour caler le rythme des plans, ne pas la réciter) : ${params.narrationHint}` : '';
+    const bp = params.narrativeBlueprint;
+    const narrationBlock = `\nStructure narrative prévue (pour caler le rythme et la progression des plans, ne pas la réciter) : Hook: ${bp.hook} | Problème: ${bp.problem} | Tension: ${bp.tension} | Révélation: ${bp.reveal} | Bénéfice: ${bp.benefit} | Preuve: ${bp.proof} | CTA: ${bp.cta}. Rythme voulu : ${bp.pacing}`;
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 5) — rattache chaque plan à un
+    // beat narratif STRUCTURÉ (narrativeBeatId), pas seulement au libellé libre narrativeRole :
+    // permet à ShotExecutionCompiler d'injecter la preuve visuelle attendue par ce beat précis
+    // dans le prompt d'exécution de CE plan, et à linkBeatsToShots de peupler beats[].shotIds.
+    const beatsBlock = bp.beats.length > 0
+      ? `\nBeats narratifs disponibles (rattache CHAQUE plan à l'un de ces ids via narrativeBeatId) :\n${bp.beats.map((b) => `- ${b.id} (${b.role}) : ${b.requiredVisualEvidence}`).join('\n')}`
+      : '';
     const conceptBlock = `\nConcept publicitaire retenu (le Shot Plan doit RACONTER cette idée précise, pas une idée générique) :
 Titre : ${params.creativeConcept.title}
 Idée : ${params.creativeConcept.concept}
@@ -164,13 +185,17 @@ ${JSON.stringify(params.visualDna)}
 
 Objectif de la campagne : ${params.objective}
 Description produit : ${params.productDescription}
-Contexte de campagne : ${params.campaignContext}${narrationBlock}${conceptBlock}${avoidBlock}${storyboardGateBlock}
+Contexte de campagne : ${params.campaignContext}${narrationBlock}${beatsBlock}${conceptBlock}${avoidBlock}${storyboardGateBlock}
 
 Avant de concevoir les plans, détermine un arc narratif court en ${shotCount} temps (ex: accroche, démonstration du bénéfice, conclusion/rappel de marque) — les plans ne doivent JAMAIS être des angles esthétiques interchangeables sans lien entre eux, mais une progression qui se répond d'un plan à l'autre.
 Conçois exactement ${shotCount} plans qui, mis bout à bout, forment une publicité premium dynamique — jamais un plan fixe, toujours un mouvement de caméra continu. Chaque plan doit avoir une raison d'exister : évite deux plans avec le même cadrage (cameraShot), le même mouvement de caméra (cameraMovement) et la même action.
+Toute affirmation portée par onScreenText/voiceover DOIT être visuellement démontrée par les champs action/visualDetails/proofElement de CE MÊME plan — ne laisse JAMAIS la voix-off ou le texte à l'écran porter seuls une preuve, un lien de cause à effet ou une transformation que l'image ne montre pas explicitement (ex: si la voix-off affirme "plongé dans le produit", le champ action doit montrer littéralement l'immersion du produit/tissu, pas un geste générique à proximité).
+Quand un plan est rattaché à un beat via narrativeBeatId, son champ action ou proofElement doit représenter concrètement la preuve visuelle attendue par ce beat (cf. "Beats narratifs disponibles" ci-dessus), pas seulement y faire allusion.
+Chaque élément distinctif confirmé de l'ADN visuel (distinctiveFeatures) doit apparaître explicitement dans productPresence ou visualDetails d'AU MOINS un plan — ne l'omets jamais silencieusement.
+"proofElement" (règle SHOW > TELL, comme proofStrategy/requiredVisualEvidence en amont) décrit l'action ou l'état PHYSIQUEMENT VISIBLE qui constitue la preuve de ce plan — jamais une affirmation. MAUVAIS : "le produit fonctionne bien". BON : "la mousse se dissout complètement en surface en 3 secondes". Laisse-le vide ("") si ce plan ne porte aucune preuve, n'invente jamais une preuve non filmable pour combler le champ.
 Réponds UNIQUEMENT en JSON strict, sans texte autour : un tableau d'EXACTEMENT ${shotCount} objets, au format :
-[{"camera":"...","subject":"...","motion":"...","lighting":"...","background":"...","narrativeRole":"...","objective":"...","location":"...","characters":"...","productPresence":"...","action":"...","cameraShot":"...","cameraMovement":"...","atmosphere":"...","visualDetails":"...","transition":"...","onScreenText":"...","voiceover":"...","soundDesign":"...","productBenefit":"...","proofElement":"..."}]
-"narrativeRole" décrit en quelques mots le rôle narratif de CE plan précis dans l'arc (ex: "hook", "demonstration of the benefit", "payoff / brand recall"). "onScreenText"/"voiceover" sont de courtes phrases (pas des paragraphes) — laisse-les vides ("") si ce plan n'en a pas besoin, n'invente jamais un texte pour combler le champ.
+[{"camera":"...","subject":"...","motion":"...","lighting":"...","background":"...","narrativeRole":"...","narrativeBeatId":"...","objective":"...","location":"...","characters":"...","productPresence":"...","action":"...","cameraShot":"...","cameraMovement":"...","atmosphere":"...","visualDetails":"...","transition":"...","onScreenText":"...","voiceover":"...","soundDesign":"...","productBenefit":"...","proofElement":"..."}]
+"narrativeRole" décrit en quelques mots le rôle narratif de CE plan précis dans l'arc (ex: "hook", "demonstration of the benefit", "payoff / brand recall"). "narrativeBeatId" reprend TEL QUEL l'un des ids listés plus haut (Beats narratifs disponibles) — laisse-le vide ("") si aucun beat ne correspond, n'invente jamais un id. "onScreenText"/"voiceover" sont de courtes phrases (pas des paragraphes) — laisse-les vides ("") si ce plan n'en a pas besoin, n'invente jamais un texte pour combler le champ.
 Les valeurs des champs doivent être en anglais (langage cinématographique standard), sauf onScreenText/voiceover qui restent dans la langue de la campagne.`;
 
     return this.generateShotPlanWithRetry(ctx, prompt, shotCount);
@@ -208,38 +233,14 @@ Les valeurs des champs doivent être en anglais (langage cinématographique stan
     );
   }
 
-  // Reproduit le gabarit cinématographique validé pour Veo — la structure et le wording de ces
-  // 7 lignes sont volontairement figés (non-régression testée), y compris la contrainte finale
-  // anti-plan-fixe. `subject` est intégré dans la ligne Camera (le gabarit n'a pas de ligne
-  // dédiée) plutôt que d'ajouter une 8e ligne — déviation assumée et signalée lors de la
-  // conception de cette architecture.
-  serializeShotToPrompt(shot: Shot): string {
-    const cameraLine = shot.subject && shot.subject.trim().toLowerCase() !== 'product' ? `${shot.camera} focused on the ${shot.subject}` : shot.camera;
-    // Ligne additive UNIQUEMENT si narrativeRole est renseigné (chantier Storyboard, 2026-08-18)
-    // — ne touche jamais aux 7 lignes du gabarit ci-dessous, déjà validées et testées littéralement.
-    const narrativeContext = shot.narrativeRole ? `This shot is the "${shot.narrativeRole}" beat of the commercial.\n` : '';
-
-    // Audit forensique Mission 4.2 (P0-6) : le Shot Plan demande 21 champs à l'IA (cf. prompt de
-    // generateShotPlan ci-dessus) mais seuls 6 atteignaient jusqu'ici CE prompt — le plan que le
-    // Storyboard Gate approuve n'était donc pas ce que Veo filmait réellement. Lignes ADDITIVES
-    // uniquement, même discipline que narrativeContext ci-dessus : absentes (chaîne vide) quand le
-    // champ correspondant est vide, jamais au prix du gabarit littéral des 7 lignes déjà figé et
-    // testé. `action`/`cameraMovement`/`productBenefit` choisis en priorité (les 3 champs cités
-    // par l'audit) — les autres champs (location, characters, productPresence, atmosphere,
-    // visualDetails, transition, soundDesign, proofElement...) restent hors périmètre de ce
-    // correctif minimal, cf. rapport d'audit section Q (roadmap).
-    const actionLine = shot.action?.trim() ? `\nAction: ${shot.action}` : '';
-    const cameraMovementLine = shot.cameraMovement?.trim() ? `\nCamera movement: ${shot.cameraMovement}` : '';
-    const productBenefitLine = shot.productBenefit?.trim() ? `\nWhat this shot must convey: ${shot.productBenefit}` : '';
-
-    return `${narrativeContext}Create a dynamic premium product commercial.
-The product remains visually identical to the reference image.
-Camera: ${cameraLine}
-Motion: ${shot.motion}
-Environment: ${shot.background}
-Lighting: ${shot.lighting}${actionLine}${cameraMovementLine}${productBenefitLine}
-The movement must remain continuous throughout the entire shot.
-Avoid a static camera and avoid a still-image effect.`;
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 6) — délègue à
+  // ShotExecutionCompiler (shot-execution-compiler.ts), qui centralise désormais la construction
+  // du prompt d'exécution (gabarit historique + niveaux PRIMARY/SUPPORTING/CONTINUITY/NEGATIVE,
+  // cf. son commentaire d'en-tête pour l'audit complet). Signature inchangée pour
+  // AiOrchestratorService/VideoQualityLoopService à l'exception du nouveau `context` requis —
+  // comportement identique à l'ancien serializeShotToPrompt(shot) pour un `context` neutre.
+  serializeShotToPrompt(shot: Shot, context: ShotExecutionContext): string {
+    return compileShotExecutionInstruction(shot, context).prompt;
   }
 
   // Repair Loop intelligent (chantier du 2026-08-18) : avant ce chantier, une régénération sur
@@ -258,35 +259,19 @@ Avoid a static camera and avoid a still-image effect.`;
   // boucle (repair-history.ts) montre qu'une correction précédente sur EXACTEMENT ce défaut a eu
   // un résultat FAIBLE (progrès insuffisant, spec Section 4) — jamais un simple renvoi du même
   // texte de correction, un correctif plus radical/exagéré est demandé.
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 6) — délègue à
+  // ShotExecutionCompiler.compileShotRepairInstruction, base désormais
+  // compileShotExecutionInstruction(shot, context).prompt (identique au comportement historique).
+  // `context` inséré comme 3e paramètre, après `quality` — tous les sites d'appel réels
+  // (AiOrchestratorService, VideoQualityLoopService) ont déjà `quality` juste avant.
   repairShotPrompt(
     shot: Shot,
     quality: ShotQualityResult,
+    context: ShotExecutionContext,
     additionalDefect?: { type: 'transition'; description: string },
     escalation?: { priorFailureReason: string },
   ): string {
-    const base = this.serializeShotToPrompt(shot);
-    const fixes: string[] = [];
-    if (!quality.motionQuality.passed) {
-      fixes.push(
-        'IMPORTANT: the previous attempt was judged too static — make the camera movement and product motion MUCH more pronounced and continuous throughout, with no moment resembling a still photo.',
-      );
-    }
-    if (!quality.visualFidelity.passed) {
-      fixes.push(
-        `IMPORTANT: the previous attempt did not accurately match the reference product (${quality.visualFidelity.reasons.join('; ')}) — ensure the product's exact color, shape, material and logo match the reference image precisely.`,
-      );
-    }
-    if (additionalDefect?.type === 'transition') {
-      fixes.push(
-        `IMPORTANT: ensure this shot's ending motion and framing transitions smoothly into the next shot's opening (${additionalDefect.description}) — avoid an abrupt cut in subject or camera angle.`,
-      );
-    }
-    if (escalation) {
-      fixes.push(
-        `CRITICAL — a previous correction attempt for this exact issue (${escalation.priorFailureReason}) still failed to fix it sufficiently. This is your final attempt: make the fix unmistakably obvious and exaggerated rather than subtle.`,
-      );
-    }
-    return fixes.length > 0 ? `${base}\n\n${fixes.join('\n')}` : base;
+    return compileShotRepairInstruction(shot, quality, context, additionalDefect, escalation);
   }
 
   // Parsing défensif suivant le même pattern que ModerationService.checkMisleadingClaimsBatch /
@@ -329,4 +314,24 @@ Avoid a static camera and avoid a still-image effect.`;
   private isValidShot(value: unknown): value is Shot {
     return isShotStructurallyValid(value);
   }
+}
+
+// Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 5) — regroupe les shots par
+// narrativeBeatId et renvoie un NarrativeBlueprint dont beats[].shotIds reflète RÉELLEMENT le
+// Shot Plan final (le champ existe depuis la Phase 3 mais restait toujours [], les shots
+// n'existant pas encore au moment où le blueprint est généré). Fonction PURE, déterministe,
+// aucun appel IA — jamais d'erreur si un shot référence un narrativeBeatId inconnu (ignoré
+// silencieusement, jamais une raison de faire échouer une campagne pour un lien narratif
+// approximatif) ni si aucun shot ne référence un beat donné (shotIds reste [] pour ce beat).
+export function linkBeatsToShots(shotPlan: ShotPlan, blueprint: NarrativeBlueprint): NarrativeBlueprint {
+  const shotIdsByBeatId = new Map<string, string[]>();
+  for (const shot of shotPlan) {
+    if (!shot.narrativeBeatId) continue;
+    const existing = shotIdsByBeatId.get(shot.narrativeBeatId) ?? [];
+    existing.push(shot.sceneId);
+    shotIdsByBeatId.set(shot.narrativeBeatId, existing);
+  }
+
+  const beats: NarrativeBeat[] = blueprint.beats.map((beat) => ({ ...beat, shotIds: shotIdsByBeatId.get(beat.id) ?? [] }));
+  return { ...blueprint, beats };
 }

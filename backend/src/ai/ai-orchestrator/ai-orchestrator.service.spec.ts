@@ -9,6 +9,8 @@ import { VideoAnalyzerService, ShotQualityResult } from '../video-direction/vide
 import { ProductIntelligenceService } from '../product-intelligence/product-intelligence.service';
 import { CreativeIntelligenceService } from '../creative-intelligence/creative-intelligence.service';
 import { CreativeConceptService } from '../creative-intelligence/creative-concept.service';
+import { NarrativeBlueprintService } from '../creative-intelligence/narrative-blueprint.service';
+import { NarrativeBlueprint } from '../creative-intelligence/narrative-blueprint.types';
 import { CreativeGateService } from '../creative-intelligence/creative-gate.service';
 import { CreativeGateResult } from '../creative-intelligence/creative-gate.types';
 import { StoryboardGateService } from '../video-direction/storyboard-gate.service';
@@ -17,6 +19,7 @@ import { CreativeIntelligence } from '../creative-intelligence/creative-intellig
 import { CreativeConcept } from '../creative-intelligence/creative-concept.types';
 import { CostControlService } from '../../plans/cost-control.service';
 import { EntitlementsService } from '../../plans/entitlements.service';
+import { QUALITY_TARGET_V1 } from '../quality/quality-target';
 
 function buildBrandContextMock(text = '') {
   const build = jest.fn().mockResolvedValue({ text, rules: [], entriesUsed: [] });
@@ -49,7 +52,9 @@ const DEFAULT_VISUAL_DNA: VisualDna = {
   colors: ['bleu'],
   materials: ['mesh'],
   shape: 'basse',
-  distinctiveFeatures: [],
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 5) — non vide : le PreFlightQualityGate
+  // bloque désormais un Visual DNA sans élément distinctif identifié.
+  distinctiveFeatures: ['semelle contrastée'],
   logoOrBrandMarks: null,
   raw: '{}',
 };
@@ -139,12 +144,32 @@ const creativeIntelligenceMock = buildCreativeIntelligenceMock();
 const DEFAULT_CONCEPT: CreativeConcept = {
   title: 'x', concept: 'x', coreMessage: 'x', hook: 'x', emotionalDirection: 'x', visualDirection: 'x',
   storytellingApproach: 'x', proofStrategy: 'x', cta: 'x', targetAudience: 'x', duration: 15, format: '9:16',
-  scenesCount: 1, raw: '{}',
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 5) — non vide : le PreFlightQualityGate
+  // bloque désormais un concept sans preuve d'alignement qualité, et ce fixture est le défaut
+  // partagé par la quasi-totalité des tests de ce fichier.
+  scenesCount: 1, qualityAlignment: 'Hook = événement dès la 1ère seconde.', raw: '{}',
 };
 function buildCreativeConceptMock(value: CreativeConcept = DEFAULT_CONCEPT) {
   return { generate: jest.fn().mockResolvedValue(value) } as unknown as CreativeConceptService;
 }
 const creativeConceptMock = buildCreativeConceptMock();
+
+// Mission 4.3 (Goal-First Quality Architecture, Phase 3) — même raisonnement que
+// creativeConceptMock ci-dessus : les tests de ce fichier vérifient le câblage EN AVAL du
+// NarrativeBlueprint (narration, script de canal, Shot Plan), pas sa logique interne (déjà
+// couverte par narrative-blueprint.service.spec.ts dédié).
+const DEFAULT_BLUEPRINT: NarrativeBlueprint = {
+  hook: 'x', problem: 'x', tension: 'x', reveal: 'x', productIntroduction: 'x',
+  benefit: 'x', proof: 'x', emotionalPayoff: 'x', cta: 'x', pacing: 'x', pausePoints: [],
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 5) — non vide : le PreFlightQualityGate
+  // bloque désormais un blueprint sans aucun beat narratif.
+  beats: [{ id: 'beat-1', role: 'hook', objective: 'x', duration: 3, requiredVisualEvidence: 'x', requiredVoiceover: 'x', shotIds: [] }],
+  raw: '{}',
+};
+function buildNarrativeBlueprintMock(value: NarrativeBlueprint = DEFAULT_BLUEPRINT) {
+  return { generate: jest.fn().mockResolvedValue(value) } as unknown as NarrativeBlueprintService;
+}
+const narrativeBlueprintMock = buildNarrativeBlueprintMock();
 
 // Phase G (chantier V2) : APPROVED par défaut — les tests de ce fichier vérifient le câblage EN
 // AVAL du Creative Gate (Shot Plan, génération vidéo...), pas sa logique interne (déjà couverte
@@ -160,7 +185,14 @@ const creativeGateMock = buildCreativeGateMock();
 
 // Phase H (chantier V2) : APPROVED, aucune scène à élaguer par défaut — même raisonnement que
 // creativeGateMock ci-dessus.
-const APPROVED_STORYBOARD_GATE: StoryboardGateResult = { status: 'APPROVED', score: 90, scenesToRemove: [], faiblesses: [], recommandation: '' };
+// Mission 4.3 (Goal-First Quality Architecture, Phase 5b) — champs ajoutés quand ce gate est
+// devenu le PreProductionQualityJudge (criterionScores/blockingDefects/risks/requiredChanges/
+// rootCauseLevel/readyForGeneration) — édition unique, propage à REJECT_STORYBOARD (spread) et à
+// tout autre test qui réutilise cette constante.
+const APPROVED_STORYBOARD_GATE: StoryboardGateResult = {
+  status: 'APPROVED', score: 90, scenesToRemove: [], faiblesses: [], recommandation: '',
+  criterionScores: { productConsistency: 90, storytelling: 90, ctaClarity: 90 }, blockingDefects: [], risks: [], requiredChanges: [], rootCauseLevel: null, readyForGeneration: true,
+};
 function buildStoryboardGateMock(result: StoryboardGateResult = APPROVED_STORYBOARD_GATE) {
   return { evaluate: jest.fn().mockResolvedValue(result) } as unknown as StoryboardGateService;
 }
@@ -246,6 +278,7 @@ beforeEach(() => {
   (productIntelligenceMock.buildProfile as jest.Mock).mockClear();
   (creativeIntelligenceMock.generate as jest.Mock).mockClear();
   (creativeConceptMock.generate as jest.Mock).mockClear();
+  (narrativeBlueprintMock.generate as jest.Mock).mockClear();
   (creativeGateMock.evaluate as jest.Mock).mockClear();
   (storyboardGateMock.evaluate as jest.Mock).mockClear();
   (costControlMock.assertBeforeGeneration as jest.Mock).mockClear();
@@ -268,6 +301,7 @@ function buildService(
     productIntelligence?: ProductIntelligenceService;
     creativeIntelligence?: CreativeIntelligenceService;
     creativeConcept?: CreativeConceptService;
+    narrativeBlueprint?: NarrativeBlueprintService;
     creativeGate?: CreativeGateService;
     storyboardGate?: StoryboardGateService;
     costControl?: CostControlService;
@@ -284,6 +318,7 @@ function buildService(
     overrides.productIntelligence ?? productIntelligenceMock,
     overrides.creativeIntelligence ?? creativeIntelligenceMock,
     overrides.creativeConcept ?? creativeConceptMock,
+    overrides.narrativeBlueprint ?? narrativeBlueprintMock,
     overrides.creativeGate ?? creativeGateMock,
     overrides.storyboardGate ?? storyboardGateMock,
     overrides.costControl ?? costControlMock,
@@ -379,13 +414,32 @@ describe('AiOrchestratorService — génération spécifique par canal', () => {
       channels: ['instagram'],
     });
 
-    expect(productIntelligenceMock.buildProfile).toHaveBeenCalledWith(expect.anything(), 'org-1', 'https://cdn.example.com/vraie-photo.png', undefined);
+    expect(productIntelligenceMock.buildProfile).toHaveBeenCalledWith(expect.anything(), 'org-1', 'https://cdn.example.com/vraie-photo.png', undefined, undefined);
     // calls[0] et non [1] ici : avec une photo, productAnalysis passe par analyzeImage (pas
     // generateText) — la stratégie est donc le 1er appel generateText, pas le 2e.
     const strategyPrompt = (gateway.generateText as jest.Mock).mock.calls[0][1].prompt;
     expect(strategyPrompt).toContain('Intelligence produit (source de vérité');
     expect(strategyPrompt).toContain('TestBrand');
     expect(strategyPrompt).toContain('confort premium');
+  });
+
+  // Mission 4.4 (Product URL Intelligence)
+  it('avec productUrl fourni (et une photo) : transmis à buildProfile comme 5e argument', async () => {
+    const gateway = buildGatewayMock();
+    const service = buildService(gateway);
+
+    await service.generateCampaign({
+      organizationId: 'org-1',
+      campaignId: 'camp-1',
+      objective: 'Vendre',
+      productImageUrl: 'https://cdn.example.com/vraie-photo.png',
+      productUrl: 'https://boutique.example.com/produit',
+      channels: ['instagram'],
+    });
+
+    expect(productIntelligenceMock.buildProfile).toHaveBeenCalledWith(
+      expect.anything(), 'org-1', 'https://cdn.example.com/vraie-photo.png', undefined, 'https://boutique.example.com/produit',
+    );
   });
 
   it('sans photo produit (texte seul) : le Product Intelligence Profile n\'est JAMAIS construit — pas de coût IA supplémentaire pour rien à ancrer', async () => {
@@ -427,15 +481,16 @@ describe('AiOrchestratorService — génération spécifique par canal', () => {
     expect(prompt).toContain('Hook');
     expect(prompt).toContain('Plan 1');
     // Corrige le défaut du 2026-08-16 : le prompt doit explicitement demander un texte à dire
-    // à voix haute par plan (pas seulement une mise en scène) pour que la narration atteigne
-    // la durée demandée (15-30s) — cf. scriptToNarration().
+    // à voix haute par plan (pas seulement une mise en scène) — le format Visuel/Voix off reste
+    // exigé pour la cohérence interne du post TikTok, même si la narration finale de la vidéo
+    // dérive désormais du NarrativeBlueprint plutôt que de ce script (Mission 4.3 Phase 3).
     expect(prompt).toContain('Voix off');
     expect(prompt).toContain('15 et 30 secondes');
   });
 
   // Audit forensic (2026-08-20, campagne réelle 5345726a-5ace-49ec-821e-b0355aaac4df) — le script
-  // TikTok (source de la narration finale via scriptToNarration) était rédigé SANS connaître le
-  // Creative Concept déjà utilisé pour le Shot Plan/la vidéo : deux pipelines créatifs
+  // TikTok était rédigé SANS connaître le Creative Concept déjà utilisé pour le Shot Plan/la
+  // vidéo : deux pipelines créatifs
   // indépendants, d'où une voix off générique ("inventaire de caractéristiques produit") qui
   // contredisait systématiquement le concept réellement filmé (storytelling/hookStrength/pacing/
   // brandCoherence/advertisingEffectiveness tous en défaut CRITIQUE en conditions réelles).
@@ -470,7 +525,7 @@ describe('AiOrchestratorService — génération spécifique par canal', () => {
     // Le mock partagé de VideoDirectorService renvoie "PROMPT[camera]" — si ce texte apparaît
     // tel quel dans le prompt envoyé à Veo, c'est bien serializeShotToPrompt qui l'a produit.
     expect(videoPrompt).toBe('PROMPT[dolly-in]');
-    expect(videoDirectorMock.serializeShotToPrompt).toHaveBeenCalledWith(DEFAULT_SHOT);
+    expect(videoDirectorMock.serializeShotToPrompt).toHaveBeenCalledWith(DEFAULT_SHOT, expect.anything());
   });
 
   it("le prompt du visuel (image) publicitaire est orienté objectif — plus la simple ligne \"Visuel publicitaire pour: {productDescription}\" d'avant le chantier du 2026-08-18", async () => {
@@ -533,121 +588,53 @@ describe('AiOrchestratorService — génération spécifique par canal', () => {
   });
 
   describe('narration (voix off) et sous-titres', () => {
-    it('dérive la narration du script TikTok, en retirant les lignes "Plan N — ..." (indications de mise en scène, pas du texte parlé)', async () => {
-      const gateway = buildGatewayMock({ TikTok: 'Hook: Regardez ça !\nPlan 1 — gros plan produit\nPlan 2 — logo final' });
-      const service = buildService(gateway);
-      await service.generateCampaign({ ...BASE_PARAMS, channels: ['tiktok'] });
-
-      const narrationPrompt = (gateway.generateAudio as jest.Mock).mock.calls[0][1].prompt;
-      expect(narrationPrompt).toContain('Regardez ça');
-      expect(narrationPrompt).not.toContain('Plan 1');
-      expect(narrationPrompt).not.toContain('Plan 2');
-    });
-
-    // Régression du 2026-08-16 : avec le format "Voix off: ..." demandé par buildChannelPrompt
-    // (cas 'tiktok'), la narration doit reprendre le Hook ET chaque réplique "Voix off", jamais
-    // seulement le Hook — sinon la vidéo finale est bien plus courte que les 15-30s demandés au
-    // modèle (finalDuration = narrationDuration, cf. VideoAssemblyService).
-    it('avec le format "Visuel/Voix off" par plan, la narration reprend le Hook ET chaque réplique "Voix off" — pas seulement le Hook', async () => {
-      const gateway = buildGatewayMock({
-        TikTok:
-          'Hook: Une photo suffit.\n\n' +
-          'Plan 1 — Visuel: gros plan smartphone | Voix off: Déposez votre photo produit.\n' +
-          'Plan 2 — Visuel: écran de génération | Voix off: Notre IA génère toute votre campagne.\n' +
-          'Plan 3 — Visuel: logo final | Voix off: Essayez gratuitement dès aujourd\'hui.',
-      });
-      const service = buildService(gateway);
-      await service.generateCampaign({ ...BASE_PARAMS, channels: ['tiktok'] });
-
-      const narrationPrompt = (gateway.generateAudio as jest.Mock).mock.calls[0][1].prompt;
-      expect(narrationPrompt).toContain('Une photo suffit');
-      expect(narrationPrompt).toContain('Déposez votre photo produit');
-      expect(narrationPrompt).toContain('Notre IA génère toute votre campagne');
-      expect(narrationPrompt).toContain('Essayez gratuitement');
-      expect(narrationPrompt).not.toContain('Visuel:');
-      expect(narrationPrompt).not.toContain('gros plan smartphone');
-    });
-
-    // Bug corrigé le 2026-08-19 (constaté sur le 1er passage E2E réel du chantier Creative
-    // Intelligence Engine — Video Judge : storytelling 15/100, hookStrength 25/100, ctaClarity
-    // 10/100) : la narration de repli (sans canal TikTok) reconstruisait le texte à partir de la
-    // SEULE productDescription brute, ignorant totalement le hook/message central/CTA déjà
-    // produits par CreativeConceptService — la publicité pensée en amont n'atteignait jamais la
-    // voix off réellement générée.
-    it("sans canal TikTok, la narration de repli s'appuie sur le Creative Concept (hook + message central + CTA), pas sur la seule productDescription", async () => {
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — la narration dérive désormais
+    // TOUJOURS du NarrativeBlueprint (buildNarrationFromBlueprint), jamais reconstituée depuis le
+    // script d'un canal particulier (ancien mécanisme scriptToNarration/buildFallbackNarration,
+    // remplacé). La logique de jointure/troncature/repli elle-même est testée unitairement dans
+    // narrative-blueprint-narration.spec.ts — ce describe vérifie uniquement le CÂBLAGE : quel
+    // blueprint atteint gateway.generateAudio, et l'élimination de l'asymétrie TikTok/non-TikTok.
+    it('la narration reflète les champs du NarrativeBlueprint mocké, pas un script de canal', async () => {
       const gateway = buildGatewayMock();
-      const richConcept: CreativeConcept = {
-        ...DEFAULT_CONCEPT,
-        hook: "Ce bleu marine mat n'est pas qu'une question de style",
-        coreMessage: 'Un design premium qui tient vraiment ses promesses.',
-        cta: 'Commandez dès maintenant',
-      };
-      const service = buildService(gateway, { creativeConcept: buildCreativeConceptMock(richConcept) });
+      const blueprint = { ...DEFAULT_BLUEPRINT, hook: 'Un chantier plongé dans le noir', cta: 'Commandez la vôtre' };
+      const service = buildService(gateway, { narrativeBlueprint: buildNarrativeBlueprintMock(blueprint) });
       await service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] });
 
-      expect(gateway.generateAudio as jest.Mock).toHaveBeenCalledTimes(1);
       const narrationPrompt = (gateway.generateAudio as jest.Mock).mock.calls[0][1].prompt;
-      expect(narrationPrompt).toContain("Ce bleu marine mat n'est pas qu'une question de style");
-      expect(narrationPrompt).toContain('Un design premium qui tient vraiment ses promesses');
-      expect(narrationPrompt).toContain('Commandez dès maintenant');
+      expect(narrationPrompt).toContain('Un chantier plongé dans le noir');
+      expect(narrationPrompt).toContain('Commandez la vôtre');
     });
 
-    it('sans canal TikTok ET sans Creative Concept exploitable (champs vides), se rabat sur productDescription plutôt que sur une narration vide', async () => {
+    // Preuve directe que le bug d'asymétrie (narration bien plus pauvre sans canal TikTok,
+    // documenté avant ce chantier) est éliminé : même NarrativeBlueprint => même narration,
+    // quel que soit le canal sélectionné.
+    it('la narration est identique avec ou sans canal TikTok, à Creative Concept/Blueprint égaux — élimine l\'asymétrie corrigée en Phase 3', async () => {
+      const blueprint = { ...DEFAULT_BLUEPRINT, hook: 'Hook commun', benefit: 'Bénéfice commun', cta: 'CTA commun' };
+
+      const gatewayWithTiktok = buildGatewayMock();
+      const serviceWithTiktok = buildService(gatewayWithTiktok, { narrativeBlueprint: buildNarrativeBlueprintMock(blueprint) });
+      await serviceWithTiktok.generateCampaign({ ...BASE_PARAMS, channels: ['tiktok'] });
+      const narrationWithTiktok = (gatewayWithTiktok.generateAudio as jest.Mock).mock.calls[0][1].prompt;
+
+      const gatewayWithoutTiktok = buildGatewayMock();
+      const serviceWithoutTiktok = buildService(gatewayWithoutTiktok, { narrativeBlueprint: buildNarrativeBlueprintMock(blueprint) });
+      await serviceWithoutTiktok.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] });
+      const narrationWithoutTiktok = (gatewayWithoutTiktok.generateAudio as jest.Mock).mock.calls[0][1].prompt;
+
+      expect(narrationWithTiktok).toBe(narrationWithoutTiktok);
+    });
+
+    // Repli neutre du NarrativeBlueprintService (échec de parsing IA, cf. son propre .spec.ts) :
+    // un blueprint entièrement vide ne doit jamais produire une narration vide — buildNarrationFromBlueprint
+    // se rabat sur productDescription (couverture complète de cette logique dans son .spec.ts dédié).
+    it('NarrativeBlueprint vide (repli neutre) : la narration se rabat sur productDescription plutôt que sur une narration vide', async () => {
       const gateway = buildGatewayMock();
-      const emptyConcept: CreativeConcept = { ...DEFAULT_CONCEPT, hook: '', coreMessage: '', cta: '' };
-      const service = buildService(gateway, { creativeConcept: buildCreativeConceptMock(emptyConcept) });
+      const emptyBlueprint = { ...DEFAULT_BLUEPRINT, hook: '', problem: '', tension: '', reveal: '', productIntroduction: '', benefit: '', proof: '', emotionalPayoff: '', cta: '' };
+      const service = buildService(gateway, { narrativeBlueprint: buildNarrativeBlueprintMock(emptyBlueprint) });
       await service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] });
 
-      expect(gateway.generateAudio as jest.Mock).toHaveBeenCalledTimes(1);
       const narrationPrompt = (gateway.generateAudio as jest.Mock).mock.calls[0][1].prompt;
       expect(narrationPrompt).toContain('Chaussures de course');
-    });
-
-    // Régression du 2026-08-17 : productDescription est souvent l'analyse vision complète
-    // (plusieurs phrases, parfois un paragraphe entier), pas un nom de produit court. Sans
-    // troncature, la narration de repli lisait ce texte intégralement — jusqu'à 20-30s de voix
-    // off pour un clip vidéo unique plafonné à 6-8s côté fournisseur (sans canal TikTok pour
-    // déclencher le multi-plans), gelant l'image sur l'essentiel de la vidéo finale (retour
-    // utilisateur, perçu comme "quasi statique").
-    it('sans canal TikTok ET sans Creative Concept exploitable, tronque une productDescription longue plutôt que de la lire intégralement dans la narration', async () => {
-      const longDescription =
-        'Catégories détectées, SaaS d\'automatisation marketing, IA pour réseaux sociaux, fourchette de prix estimée entre 29 et 149 euros par mois, essai gratuit disponible sans engagement, compatible avec Instagram TikTok et Facebook.';
-      const gateway = buildGatewayMock();
-      const emptyConcept: CreativeConcept = { ...DEFAULT_CONCEPT, hook: '', coreMessage: '', cta: '' };
-      const service = buildService(gateway, { creativeConcept: buildCreativeConceptMock(emptyConcept) });
-      await service.generateCampaign({ ...BASE_PARAMS, productDescription: longDescription, channels: ['instagram'] });
-
-      const narrationPrompt = (gateway.generateAudio as jest.Mock).mock.calls[0][1].prompt;
-      expect(narrationPrompt.length).toBeLessThan(longDescription.length);
-      expect(narrationPrompt).not.toBe(`Découvrez ${longDescription}.`);
-    });
-
-    // Bug réel constaté en conditions réelles le 2026-08-18 (retour utilisateur, campagne
-    // "Lancement gamme entretien écologique") : sans description saisie par l'utilisateur ET
-    // sans canal TikTok, `effectiveParams.productDescription` est le bloc ÉTIQUETÉ produit par
-    // formatProductAnalysis() ("Catégorie détectée : ...\n..."), pas une phrase naturelle — la
-    // narration disait littéralement "Découvrez Catégorie détectée : Produits ménagers...".
-    it("sans productDescription fourni ET sans canal TikTok (photo seule) ET sans Creative Concept exploitable, la narration de repli est une phrase naturelle — jamais \"Découvrez Catégorie détectée : ...\"", async () => {
-      const gateway = buildGatewayMock({}, JSON.stringify({
-        category: 'kit de nettoyants multi-usages',
-        priceRange: '10-25 €',
-        strengths: ['Formats variés', 'Dosage précis'],
-        usp: "Pack tout-en-un couvrant la plupart des besoins de nettoyage domestique",
-      }));
-      const emptyConcept: CreativeConcept = { ...DEFAULT_CONCEPT, hook: '', coreMessage: '', cta: '' };
-      const service = buildService(gateway, { creativeConcept: buildCreativeConceptMock(emptyConcept) });
-      await service.generateCampaign({
-        organizationId: 'org-1',
-        campaignId: 'camp-1',
-        objective: 'Vendre',
-        productImageUrl: 'https://cdn.example.com/produit.png',
-        channels: ['instagram'],
-      });
-
-      const narrationPrompt = (gateway.generateAudio as jest.Mock).mock.calls[0][1].prompt;
-      expect(narrationPrompt).not.toContain('Catégorie détectée');
-      expect(narrationPrompt).toContain('kit de nettoyants multi-usages');
-      expect(narrationPrompt).toContain('Pack tout-en-un');
     });
 
     it('transcrit la narration générée (pas le texte du script) pour obtenir le timing réel des sous-titres', async () => {
@@ -913,7 +900,7 @@ describe('AiOrchestratorService — architecture Shot Plan (Visual DNA → Video
     }
   });
 
-  it('le Video Director reçoit l\'ADN visuel, la description produit, le contexte de stratégie, la narration prévue et le concept créatif', async () => {
+  it('le Video Director reçoit l\'ADN visuel, la description produit, le contexte de stratégie, le NarrativeBlueprint et le concept créatif', async () => {
     // Clé de recherche unique à la génération de la stratégie (cf. buildChannelPrompt, qui
     // reprend "Stratégie marketing de référence" mais jamais "SMART") — isole ce contenu du
     // reste des prompts en aval pour vérifier précisément que campaignContext EST bien
@@ -928,11 +915,10 @@ describe('AiOrchestratorService — architecture Shot Plan (Visual DNA → Video
     expect(directorParams.productDescription).toBe('Chaussures de course');
     expect(directorParams.objective).toBe('Vendre 100 paires'); // chantier "prompts précis, orientés objectif" (2026-08-18) — champ dédié, plus seulement noyé dans campaignContext
     expect(directorParams.campaignContext).toBe('STRATEGY_CONTENT_MARKER');
-    // Bug corrigé le 2026-08-19 : la narration de repli (sans canal TikTok) vient désormais du
-    // Creative Concept (hook/message central/CTA), plus de productDescription — cf. DEFAULT_CONCEPT
-    // (hook/coreMessage/cta = 'x' par défaut dans ce fichier de tests) et le describe dédié
-    // "voix off et sous-titres" plus bas pour la couverture complète de cette logique.
-    expect(directorParams.narrationHint).toBe('x. x. x');
+    // Mission 4.3 (Goal-First Quality Architecture, Phase 3) : le Video Director reçoit
+    // désormais la structure narrative complète (NarrativeBlueprint), plus un texte plat dérivé
+    // du Creative Concept — cf. narrative-blueprint.service.spec.ts pour la génération elle-même.
+    expect(directorParams.narrativeBlueprint).toEqual(DEFAULT_BLUEPRINT);
     // P0.3 (chantier Creative Intelligence Engine, 2026-08-18) : shotCount n'est plus un 3e
     // argument positionnel — dérivé de creativeConcept.scenesCount, désormais le VRAI concept
     // produit par CreativeConceptService (mocké ici via creativeConceptMock, cf. DEFAULT_CONCEPT).
@@ -990,7 +976,7 @@ describe('AiOrchestratorService — architecture Shot Plan (Visual DNA → Video
     const [, secondCall] = (gateway.generateVideo as jest.Mock).mock.calls[1];
     expect(firstCall.prompt).toBe('PROMPT[dolly-in]'); // serializeShotToPrompt (1er essai, inchangé)
     expect(secondCall.prompt).toBe('REPAIRED[dolly-in]'); // repairShotPrompt (2e essai, NOUVEAU)
-    expect(videoDirectorMock.repairShotPrompt).toHaveBeenCalledWith(DEFAULT_SHOT, FAILING_QUALITY);
+    expect(videoDirectorMock.repairShotPrompt).toHaveBeenCalledWith(DEFAULT_SHOT, FAILING_QUALITY, expect.anything());
   });
 
   it('échec qualité aux deux tentatives : le meilleur des deux essais (qualityScore le plus haut) est retenu, jamais 0 clip', async () => {
@@ -1061,6 +1047,35 @@ describe('AiOrchestratorService — Phase E : validation structurelle du Shot Pl
   });
 });
 
+// Mission 4.3 (Goal-First Quality Architecture, Phase 5, Étape 7).
+describe('AiOrchestratorService — Phase 5 : PreFlightQualityGate avant génération vidéo', () => {
+  it('Visual DNA en repli neutre (isFallback=true) : échoue AVANT generateVideo, jamais appelé', async () => {
+    const gateway = buildGatewayMock();
+    const service = buildService(gateway, { visualDna: buildVisualDnaMock({ ...DEFAULT_VISUAL_DNA, isFallback: true }) });
+
+    await expect(service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] })).rejects.toThrow(/QUALITY_GATE:.*pré-vol/);
+    expect(gateway.generateVideo as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('un plan usedFallbackTemplate=true : échoue AVANT generateVideo, jamais appelé (élevé depuis un simple warning)', async () => {
+    const gateway = buildGatewayMock();
+    const fallbackShot: Shot = { ...DEFAULT_SHOT, usedFallbackTemplate: true };
+    const service = buildService(gateway, { videoDirector: buildVideoDirectorMock([fallbackShot]) });
+
+    await expect(service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] })).rejects.toThrow(/QUALITY_GATE:.*pré-vol/);
+    expect(gateway.generateVideo as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('narrativeBeatId référencé par un plan ne correspond à aucun beat du blueprint : échoue AVANT generateVideo (lien orphelin)', async () => {
+    const gateway = buildGatewayMock();
+    const orphanedShot: Shot = { ...DEFAULT_SHOT, narrativeBeatId: 'beat-inconnu' };
+    const service = buildService(gateway, { videoDirector: buildVideoDirectorMock([orphanedShot]) });
+
+    await expect(service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] })).rejects.toThrow(/QUALITY_GATE:.*pré-vol/);
+    expect(gateway.generateVideo as jest.Mock).not.toHaveBeenCalled();
+  });
+});
+
 // Phase G (chantier "Moteur d'optimisation de la qualité vidéo — V2", 2026-08-19, spec Sections
 // 35-45) : le Creative Gate doit être franchi AVANT tout Shot Plan — jamais la génération vidéo
 // utilisée comme outil de découverte pour savoir si le concept fonctionne.
@@ -1109,7 +1124,13 @@ describe('AiOrchestratorService — Phase G : Creative Gate', () => {
 // Phase H (chantier "Moteur d'optimisation de la qualité vidéo — V2", 2026-08-19, spec Sections
 // 46-53) : le Storyboard Gate doit être franchi AVANT toute génération vidéo.
 describe('AiOrchestratorService — Phase H : Storyboard Gate', () => {
-  const REJECT_STORYBOARD: StoryboardGateResult = { ...APPROVED_STORYBOARD_GATE, status: 'REJECT', score: 55, faiblesses: ['aucune démonstration du bénéfice'], recommandation: 'ajouter un plan de démonstration' };
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 5b) — blockingDefects/requiredChanges
+  // renseignés : la boucle de régénération unique de AiOrchestratorService construit désormais son
+  // feedback à partir de CES champs, plus faiblesses/recommandation (conservés pour compat).
+  const REJECT_STORYBOARD: StoryboardGateResult = {
+    ...APPROVED_STORYBOARD_GATE, status: 'REJECT', score: 55, faiblesses: ['aucune démonstration du bénéfice'], recommandation: 'ajouter un plan de démonstration',
+    blockingDefects: ['aucune démonstration du bénéfice'], requiredChanges: ['ajouter un plan de démonstration'], rootCauseLevel: 'SHOT', readyForGeneration: false,
+  };
 
   it('APPROVED dès le 1er essai, aucune scène à élaguer : une seule évaluation, generateVideo appelé pour le plan complet', async () => {
     const gateway = buildGatewayMock();
@@ -1175,6 +1196,61 @@ describe('AiOrchestratorService — Phase H : Storyboard Gate', () => {
 
     expect(result.creativeGateStatus).toBe('APPROVED');
     expect(result.storyboardGateStatus).toBe('APPROVED');
+  });
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 1) — QualityTarget créé UNE FOIS, avant le
+  // Creative Concept, et transmis TEL QUEL (même instance) à Creative Gate ET Storyboard Gate —
+  // jamais recréé indépendamment par chaque porte (ce qui permettrait une divergence silencieuse).
+  it('crée un seul QualityTarget et le transmet identiquement à Creative Concept, Narrative Blueprint, Creative Gate et Storyboard Gate', async () => {
+    const gateway = buildGatewayMock();
+    const creativeConcept = buildCreativeConceptMock();
+    const narrativeBlueprint = buildNarrativeBlueprintMock();
+    const creativeGate = buildCreativeGateMock();
+    const storyboardGate = buildStoryboardGateMock();
+    const service = buildService(gateway, { creativeConcept, narrativeBlueprint, creativeGate, storyboardGate });
+
+    const result = await service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] });
+
+    expect(result.qualityTarget).toEqual(QUALITY_TARGET_V1);
+    const [, creativeConceptArgs] = (creativeConcept.generate as jest.Mock).mock.calls[0];
+    const [, narrativeBlueprintArgs] = (narrativeBlueprint.generate as jest.Mock).mock.calls[0];
+    const [, creativeGateArgs] = (creativeGate.evaluate as jest.Mock).mock.calls[0];
+    const [, storyboardGateArgs] = (storyboardGate.evaluate as jest.Mock).mock.calls[0];
+    expect(creativeConceptArgs.qualityTarget).toBe(result.qualityTarget);
+    expect(narrativeBlueprintArgs.qualityTarget).toBe(result.qualityTarget);
+    expect(creativeGateArgs.qualityTarget).toBe(result.qualityTarget);
+    expect(storyboardGateArgs.qualityTarget).toBe(result.qualityTarget);
+  });
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 3) — le NarrativeBlueprint devient
+  // consultable sur le résultat, nécessaire à CampaignGenerationProcessor.tryEscalate pour
+  // regenerateShotPlanAndVideo lors d'une escalade STORYBOARD.
+  it('expose narrativeBlueprint sur le résultat', async () => {
+    const gateway = buildGatewayMock();
+    const service = buildService(gateway);
+
+    const result = await service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] });
+
+    expect(result.narrativeBlueprint).toEqual(DEFAULT_BLUEPRINT);
+  });
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 4, Étape 5) — beats[].shotIds est peuplé
+  // (linkBeatsToShots) une fois le Shot Plan final connu, pas laissé vide comme en Phase 3.
+  it('narrativeBlueprint exposé a ses beats[].shotIds peuplés d\'après le Shot Plan final', async () => {
+    const gateway = buildGatewayMock();
+    const blueprint: NarrativeBlueprint = {
+      ...DEFAULT_BLUEPRINT,
+      beats: [{ id: 'beat-1', role: 'hook', objective: 'x', duration: 3, requiredVisualEvidence: 'x', requiredVoiceover: 'x', shotIds: [] }],
+    };
+    const shotWithBeat: Shot = { ...DEFAULT_SHOT, narrativeBeatId: 'beat-1' };
+    const service = buildService(gateway, {
+      narrativeBlueprint: buildNarrativeBlueprintMock(blueprint),
+      videoDirector: buildVideoDirectorMock([shotWithBeat]),
+    });
+
+    const result = await service.generateCampaign({ ...BASE_PARAMS, channels: ['instagram'] });
+
+    expect(result.narrativeBlueprint.beats[0].shotIds).toEqual([shotWithBeat.sceneId]);
   });
 });
 
@@ -1422,9 +1498,11 @@ describe('AiOrchestratorService — Phase P : méthodes d\'escalade automatique'
         referenceImageUrl: 'https://cdn.example.com/photo.png',
         effectiveParams: BASE_PARAMS,
         strategy: 'Stratégie X',
-        narrationText: 'Narration X',
+        narrativeBlueprint: DEFAULT_BLUEPRINT,
         organizationId: 'org-1',
         escalationFeedback: 'Le hook ne convainc pas',
+        qualityTarget: QUALITY_TARGET_V1,
+        productProfile: null,
       });
 
       const [, directorParams] = (videoDirector.generateShotPlan as jest.Mock).mock.calls[0];
@@ -1437,7 +1515,10 @@ describe('AiOrchestratorService — Phase P : méthodes d\'escalade automatique'
 
     it('échoue proprement (QUALITY_GATE) si le storyboard reste REJECT après l\'unique régénération, jamais de generateVideo', async () => {
       const gateway = buildGatewayMock();
-      const storyboardGate = buildStoryboardGateMock({ status: 'REJECT', score: 40, scenesToRemove: [], faiblesses: ['incohérent'], recommandation: '' });
+      const storyboardGate = buildStoryboardGateMock({
+        ...APPROVED_STORYBOARD_GATE, status: 'REJECT', score: 40, scenesToRemove: [], faiblesses: ['incohérent'], recommandation: '',
+        blockingDefects: ['incohérent'], requiredChanges: [], rootCauseLevel: 'SHOT', readyForGeneration: false,
+      });
       const service = buildService(gateway, { storyboardGate });
 
       await expect(
@@ -1447,8 +1528,10 @@ describe('AiOrchestratorService — Phase P : méthodes d\'escalade automatique'
           referenceImageUrl: 'https://cdn.example.com/photo.png',
           effectiveParams: BASE_PARAMS,
           strategy: 'Stratégie X',
-          narrationText: 'Narration X',
+          narrativeBlueprint: DEFAULT_BLUEPRINT,
           organizationId: 'org-1',
+          qualityTarget: QUALITY_TARGET_V1,
+          productProfile: null,
         }),
       ).rejects.toThrow(/QUALITY_GATE/);
       expect(gateway.generateVideo).not.toHaveBeenCalled();
@@ -1470,6 +1553,7 @@ describe('AiOrchestratorService — Phase P : méthodes d\'escalade automatique'
         organizationId: 'org-1',
         productProfile: null,
         escalationFeedback: 'Le concept ne convainc jamais',
+        qualityTarget: QUALITY_TARGET_V1,
       });
 
       const [, conceptParams] = (creativeConceptMock.generate as jest.Mock).mock.calls[0];
@@ -1502,10 +1586,75 @@ describe('AiOrchestratorService — Phase P : méthodes d\'escalade automatique'
           organizationId: 'org-1',
           productProfile: null,
           escalationFeedback: 'x',
+          qualityTarget: QUALITY_TARGET_V1,
         }),
       ).rejects.toThrow(/QUALITY_GATE/);
       expect(gateway.generateAudio).not.toHaveBeenCalled();
       expect(gateway.generateVideo).not.toHaveBeenCalled();
+    });
+  });
+
+  // Mission 4.3 (Goal-First Quality Architecture, Phase 7, Étape 19) — réutilisation ciblée pour
+  // CampaignsService.regenerate() : contrairement aux escalades Phase P ci-dessus (déclenchées en
+  // interne, PENDANT le job), celle-ci est appelée en tête d'un NOUVEAU job, avec un Creative
+  // Concept déjà approuvé fourni directement (jamais reconstruit).
+  describe('regenerateFromApprovedConcept', () => {
+    it('ne reconstruit JAMAIS Creative Intelligence/Creative Concept/Creative Gate — les réutilise tels quels', async () => {
+      const gateway = buildGatewayMock();
+      const videoDirector = buildVideoDirectorMock([DEFAULT_SHOT]);
+      const service = buildService(gateway, { videoDirector });
+
+      const result = await service.regenerateFromApprovedConcept({
+        ...BASE_PARAMS,
+        creativeIntelligence: DEFAULT_CREATIVE_INTELLIGENCE,
+        creativeConcept: DEFAULT_CONCEPT,
+        qualityTarget: QUALITY_TARGET_V1,
+      });
+
+      expect(creativeIntelligenceMock.generate as jest.Mock).not.toHaveBeenCalled();
+      expect(creativeConceptMock.generate as jest.Mock).not.toHaveBeenCalled();
+      expect(creativeGateMock.evaluate as jest.Mock).not.toHaveBeenCalled();
+      expect(result.creativeGateStatus).toBe('APPROVED');
+      expect(result.creativeIntelligence).toBe(DEFAULT_CREATIVE_INTELLIGENCE);
+      expect(result.creativeConcept).toBe(DEFAULT_CONCEPT);
+    });
+
+    it('régénère malgré tout la stratégie, le NarrativeBlueprint, la copie par canal, le visuel et le Shot Plan/vidéo — une réutilisation du concept ne fige pas l\'exécution', async () => {
+      const gateway = buildGatewayMock();
+      const videoDirector = buildVideoDirectorMock([DEFAULT_SHOT]);
+      const service = buildService(gateway, { videoDirector });
+
+      const result = await service.regenerateFromApprovedConcept({
+        ...BASE_PARAMS,
+        channels: ['instagram'],
+        creativeIntelligence: DEFAULT_CREATIVE_INTELLIGENCE,
+        creativeConcept: DEFAULT_CONCEPT,
+        qualityTarget: QUALITY_TARGET_V1,
+      });
+
+      expect(result.strategy).toBeTruthy();
+      expect(result.narrativeBlueprint).toBeTruthy();
+      expect(result.channelContent.instagram).toBeTruthy();
+      expect(result.visual).toBeTruthy();
+      expect(result.video).toBeTruthy();
+      expect(gateway.generateVideo).toHaveBeenCalledTimes(1);
+    });
+
+    it('transmet le MÊME qualityTarget fourni (jamais recréé) au Storyboard Gate', async () => {
+      const gateway = buildGatewayMock();
+      const storyboardGate = buildStoryboardGateMock();
+      const service = buildService(gateway, { storyboardGate });
+      const customTarget = { ...QUALITY_TARGET_V1, targetScore: 90 };
+
+      await service.regenerateFromApprovedConcept({
+        ...BASE_PARAMS,
+        creativeIntelligence: DEFAULT_CREATIVE_INTELLIGENCE,
+        creativeConcept: DEFAULT_CONCEPT,
+        qualityTarget: customTarget,
+      });
+
+      const [, storyboardGateArgs] = (storyboardGate.evaluate as jest.Mock).mock.calls[0];
+      expect(storyboardGateArgs.qualityTarget).toBe(customTarget);
     });
   });
 });

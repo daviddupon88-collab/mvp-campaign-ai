@@ -13,7 +13,7 @@ const CTX = { organizationId: 'org-1', campaignId: 'camp-1', purpose: 'campaign_
 const ACCEPTED: CreativeConcept = {
   title: 'Vu de loin, protégé de près', concept: 'c', coreMessage: 'm', hook: 'Chantier plongé dans le noir',
   emotionalDirection: 'e', visualDirection: 'Contraste sombre/lumineux', storytellingApproach: 's', proofStrategy: 'p',
-  cta: 'Commandez la vôtre', targetAudience: 'Ouvriers du BTP', duration: 20, format: '9:16', scenesCount: 4, raw: '{}',
+  cta: 'Commandez la vôtre', targetAudience: 'Ouvriers du BTP', duration: 20, format: '9:16', scenesCount: 4, qualityAlignment: '', raw: '{}',
 };
 
 describe('CreativeVariationService.generateVariations', () => {
@@ -106,5 +106,18 @@ describe('CreativeVariationService.generateVariations', () => {
 
     const [, , , promptVersion] = (gateway.generateText as jest.Mock).mock.calls[0];
     expect(promptVersion).toBe('creative-variation-v1');
+  });
+
+  // Bug réel constaté en conditions réelles (2026-08-21) : sans maxTokens explicite, ce call
+  // retombait sur le défaut 4000 de AnthropicProvider — jusqu'à 3 concepts complets (14 champs
+  // chacun), risque réel élevé de troncature JSON en sortie.
+  it('demande un budget de tokens généreux (8000), pas le défaut 4000 — évite la troncature JSON', async () => {
+    const gateway = buildGatewayMock(JSON.stringify([]));
+    const service = new CreativeVariationService(gateway, promptEngine);
+
+    await service.generateVariations(CTX, ACCEPTED);
+
+    const [, requestParams] = (gateway.generateText as jest.Mock).mock.calls[0];
+    expect(requestParams.maxTokens).toBe(8000);
   });
 });
